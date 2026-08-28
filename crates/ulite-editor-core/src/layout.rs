@@ -76,6 +76,10 @@ fn compute_wrap(
         // Mode A in the old code: no wrap, the whole line is one visual
         // line no matter how long — fastest path, matches
         // `LayoutManager.wrapText`'s `!wordWrapEnabled` branch.
+        // The element really is a range (a visual line), so clippy's
+        // single_range_in_vec_init suggestion (collect a `Vec<usize>` of
+        // indices) would change the type — allowed deliberately.
+        #[allow(clippy::single_range_in_vec_init)]
         return vec![0..content.len()];
     }
 
@@ -132,6 +136,10 @@ mod tests {
     fn empty_line_yields_single_empty_range() {
         let mut cache = None;
         let ranges = wrap_line(&mut cache, "", &[], 500, true, 0);
+        // Single-element slice holding one visual-line range; clippy's
+        // single_range_in_vec_init wants a range-to-index-Vec here, which
+        // is a different type — allowed deliberately.
+        #[allow(clippy::single_range_in_vec_init)]
         assert_eq!(ranges, &[0..0]);
     }
 
@@ -160,6 +168,8 @@ mod tests {
         let mut cache = None;
         // single character wider than the viewport itself
         let ranges = wrap_line(&mut cache, "a", &[500.0], 100, true, 0);
+        // Same single-element-of-range case as the empty line above.
+        #[allow(clippy::single_range_in_vec_init)]
         assert_eq!(ranges, &[0..1]);
     }
 
