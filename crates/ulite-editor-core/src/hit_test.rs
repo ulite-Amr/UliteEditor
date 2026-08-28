@@ -79,8 +79,8 @@ pub fn locate_tap(
     // Stage 2: which visual line within the row.
     let visual_count = source.visual_line_count(row);
     let relative_y = adjusted_y - row_start_y;
-    let visual_index = ((relative_y / line_height) as isize)
-        .clamp(0, visual_count as isize - 1) as usize;
+    let visual_index =
+        ((relative_y / line_height) as isize).clamp(0, visual_count as isize - 1) as usize;
 
     // Stage 3: which column within that visual line.
     let text = source.visual_line_text(row, visual_index);
