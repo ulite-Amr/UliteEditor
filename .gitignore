@@ -1,5 +1,8 @@
 .project/
 
+# Local opencode tooling (commands, permissions, skills) — never part of the repo
+.opencode/
+
 # Rust build output
 **/target/
 
