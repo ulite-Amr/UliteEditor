@@ -1,0 +1,17 @@
+.project/
+
+# Rust build output
+**/target/
+
+# Kotlin/Android build output
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.keystore
+
+# IDE
+.idea/
+*.iml
+.kotlin/
