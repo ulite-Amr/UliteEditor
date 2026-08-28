@@ -11,6 +11,9 @@ local.properties
 *.aab
 *.keystore
 
+# Downloaded CI artifacts
+dist/
+
 # IDE
 .idea/
 *.iml
