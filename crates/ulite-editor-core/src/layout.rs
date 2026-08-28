@@ -69,6 +69,10 @@ fn compute_wrap(
     wrap_enabled: bool,
 ) -> Vec<Range<usize>> {
     if content.is_empty() {
+        // One empty visual line — `LayoutManager`'s explicit empty-line
+        // handling. Same single-element-of-Range case as the
+        // `!wrap_enabled` branch below; see that `#[allow]`'s rationale.
+        #[allow(clippy::single_range_in_vec_init)]
         return vec![0..0];
     }
 
@@ -76,6 +80,10 @@ fn compute_wrap(
         // Mode A in the old code: no wrap, the whole line is one visual
         // line no matter how long — fastest path, matches
         // `LayoutManager.wrapText`'s `!wordWrapEnabled` branch.
+        // The element really is a range (a visual line), so clippy's
+        // single_range_in_vec_init suggestion (collect a `Vec<usize>` of
+        // indices) would change the type — allowed deliberately.
+        #[allow(clippy::single_range_in_vec_init)]
         return vec![0..content.len()];
     }
 
@@ -129,6 +137,12 @@ mod tests {
     use super::*;
 
     #[test]
+    // Single-element slice of one visual-line range; clippy's
+    // single_range_in_vec_init fix would turn the element from `Range`
+    // into `usize` (a different type). The allow sits on the `fn`, not
+    // the `assert_eq!`, because an attribute on a macro invocation is
+    // ignored by the lint inside its expansion.
+    #[allow(clippy::single_range_in_vec_init)]
     fn empty_line_yields_single_empty_range() {
         let mut cache = None;
         let ranges = wrap_line(&mut cache, "", &[], 500, true, 0);
@@ -158,9 +172,12 @@ mod tests {
     #[test]
     fn always_takes_at_least_one_char_even_if_it_overflows() {
         let mut cache = None;
-        // single character wider than the viewport itself
+        // single character wider than the viewport itself — same
+        // single-element-of-Range case, allowed like the empty-line test.
+        #[allow(clippy::single_range_in_vec_init)]
+        let expected: [Range<usize>; 1] = [0..1];
         let ranges = wrap_line(&mut cache, "a", &[500.0], 100, true, 0);
-        assert_eq!(ranges, &[0..1]);
+        assert_eq!(ranges, &expected);
     }
 
     #[test]

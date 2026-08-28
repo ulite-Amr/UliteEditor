@@ -142,14 +142,18 @@ impl ScrollState {
     /// `FLING_STOP_VELOCITY`, which callers can use the way the old code
     /// used `computeScroll`'s return value.
     pub fn tick_fling(&mut self, dt_seconds: f32) -> bool {
-        if self.velocity_x.abs() < FLING_STOP_VELOCITY && self.velocity_y.abs() < FLING_STOP_VELOCITY {
+        if self.velocity_x.abs() < FLING_STOP_VELOCITY
+            && self.velocity_y.abs() < FLING_STOP_VELOCITY
+        {
             self.velocity_x = 0.0;
             self.velocity_y = 0.0;
             return false;
         }
 
-        self.scroll_x = (self.scroll_x + self.velocity_x * dt_seconds).clamp(0.0, self.max_scroll_x);
-        self.scroll_y = (self.scroll_y + self.velocity_y * dt_seconds).clamp(0.0, self.max_scroll_y);
+        self.scroll_x =
+            (self.scroll_x + self.velocity_x * dt_seconds).clamp(0.0, self.max_scroll_x);
+        self.scroll_y =
+            (self.scroll_y + self.velocity_y * dt_seconds).clamp(0.0, self.max_scroll_y);
 
         let decay = (1.0 - FLING_FRICTION_PER_SECOND).powf(dt_seconds * 60.0);
         self.velocity_x *= decay;
