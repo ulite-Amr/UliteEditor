@@ -18,6 +18,8 @@
 //! the engine's `usize` byte offsets convert losslessly (values are never
 //! negative and real buffers stay far below 2^63).
 
+use std::sync::{Mutex, MutexGuard};
+
 use crate::buffer::Buffer;
 use crate::cursor::CursorPosition as EngineCursorPosition;
 
@@ -195,15 +197,45 @@ pub fn cursor_screen_position(
 /// IME-style methods. All coordinates entering or leaving this type are 64-bit
 /// or `f32`; the engine's `usize` math stays inside.
 ///
+/// UniFFI objects are `Arc`-shared across the FFI, so methods take `&self`
+/// and the state sits behind a mutex (interior mutability) rather than
+/// `&mut self` receivers — the same shape as any uniffi object, and the
+/// sample app drives it from one thread anyway. A poisoned lock (a holder
+/// panicking mid-mutation) is recovered rather than propagated because edits
+/// never corrupt the state on their own.
+///
 /// `wrapped_lines` never measures: the caller supplies per-character widths
 /// (and a viewport width in the same wrapping units), exactly as the
 /// internal `crate::layout::wrap_line` contract demands.
 pub struct EditorSession {
+    state: Mutex<SessionState>,
+}
+
+/// The mutable document behind [`EditorSession`]'s lock.
+struct SessionState {
     buffer: Buffer,
     cursor: EngineCursorPosition,
     scroll: crate::scroll::ScrollState,
     wrap_caches: Vec<Option<crate::layout::WrapCache>>,
     metrics_version: u64,
+}
+
+impl SessionState {
+    /// Grows the wrap-cache list to match the buffer, padding the new rows
+    /// with uncached entries (they compute on first wrap).
+    fn ensure_cache_len(&mut self) {
+        self.wrap_caches.resize(self.buffer.row_count(), None);
+    }
+
+    /// Marks every row from `row` upward as stale — edits at or below a row
+    /// can only affect it and everything after it. Over-invalidation (a
+    /// character added mid-row also dropping earlier rows' caches) is
+    /// harmless; the next wrap recomputes. This is the single
+    /// cache-invalidation point the session has, mirroring how the engine
+    /// keeps caches caller-owned (`crate::buffer::Buffer` never sees them).
+    fn invalidate_from(&mut self, row: usize) {
+        self.wrap_caches.truncate(row);
+    }
 }
 
 impl Default for EditorSession {
@@ -217,117 +249,119 @@ impl EditorSession {
     /// stationary camera. Wire `update_bounds` before rendering.
     pub fn new() -> Self {
         Self {
-            buffer: Buffer::new(),
-            cursor: EngineCursorPosition::default(),
-            scroll: crate::scroll::ScrollState::new(),
-            wrap_caches: Vec::new(),
-            metrics_version: 0,
+            state: Mutex::new(SessionState {
+                buffer: Buffer::new(),
+                cursor: EngineCursorPosition::default(),
+                scroll: crate::scroll::ScrollState::new(),
+                wrap_caches: Vec::new(),
+                metrics_version: 0,
+            }),
         }
     }
 
-    /// Grows the wrap-cache list to match the buffer, padding the new rows
-    /// with uncached entries (they compute on first wrap).
-    fn ensure_cache_len(&mut self) {
-        self.wrap_caches.resize(self.buffer.row_count(), None);
-    }
-
-    /// Marks every row from `row` upward as stale — edits at or below a row
-    /// can only affect it and everything after it. Over-invalidation (a
-    /// character added mid-row also dropping earlier rows' caches) is
-    /// harmless; the next wrap recomputes. This is the single
-    /// cache-invalidation point the facade has, mirroring how the engine
-    /// keeps caches caller-owned (`crate::buffer::Buffer` never sees them).
-    fn invalidate_from(&mut self, row: usize) {
-        self.wrap_caches.truncate(row);
+    /// Locks the session state, recovering from a poisoned lock — the
+    /// contents are still valid (edits never corrupt them), only the
+    /// previous holder panicked while mutating.
+    fn state(&self) -> MutexGuard<'_, SessionState> {
+        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Current cursor position.
     pub fn cursor(&self) -> CursorPosition {
-        CursorPosition::from_engine(self.cursor)
+        CursorPosition::from_engine(self.state().cursor)
     }
 
     /// Moves the cursor, clamping both coordinates into the document —
     /// out-of-range rows land on the last line, out-of-range columns on
     /// its end. Rendering code can therefore forward any tap position
     /// straight here and always end up with a valid cursor.
-    pub fn set_cursor(&mut self, position: CursorPosition) {
-        let max_row = self.buffer.row_count().saturating_sub(1) as u64;
+    pub fn set_cursor(&self, position: CursorPosition) {
+        let mut state = self.state();
+        let max_row = state.buffer.row_count().saturating_sub(1) as u64;
         let row = position.row.min(max_row) as usize;
-        let column = position.column.min(self.buffer.line(row).len() as u64) as usize;
-        self.cursor = EngineCursorPosition::new(row, column);
+        let column = position.column.min(state.buffer.line(row).len() as u64) as usize;
+        state.cursor = EngineCursorPosition::new(row, column);
     }
 
     /// Inserts a character at the cursor and advances it. `ch` may carry
     /// more than one code point (some inputs hand over whole grapheme
     /// clusters); every code point is inserted, so multi-scope input can
     /// never silently truncate.
-    pub fn insert_char(&mut self, ch: String) {
-        let row = self.cursor.row;
+    pub fn insert_char(&self, ch: String) {
+        let mut state = self.state();
+        let row = state.cursor.row;
         for character in ch.chars() {
-            crate::input::insert_char(&mut self.buffer, &mut self.cursor, character);
+            crate::input::insert_char(&mut state.buffer, &mut state.cursor, character);
         }
-        self.invalidate_from(row);
+        state.invalidate_from(row);
     }
 
     /// Inserts a run of text (paste, IME commit) at the cursor and advances
     /// past it. Newlines split into their own logical rows, so whole
     /// paragraphs can be inserted in one call.
-    pub fn insert_text(&mut self, text: String) {
-        let row = self.cursor.row;
+    pub fn insert_text(&self, text: String) {
+        let mut state = self.state();
+        let row = state.cursor.row;
         for character in text.chars() {
             if character == '\n' {
-                crate::input::handle_new_line(&mut self.buffer, &mut self.cursor);
+                crate::input::handle_new_line(&mut state.buffer, &mut state.cursor);
             } else {
-                crate::input::insert_char(&mut self.buffer, &mut self.cursor, character);
+                crate::input::insert_char(&mut state.buffer, &mut state.cursor, character);
             }
         }
-        self.invalidate_from(row);
+        state.invalidate_from(row);
     }
 
     /// Inserts a newline at the cursor: everything from the cursor becomes a
     /// new row below it, and the cursor moves to that row's start.
-    pub fn newline(&mut self) {
-        let row = self.cursor.row;
-        crate::input::handle_new_line(&mut self.buffer, &mut self.cursor);
-        self.invalidate_from(row);
+    pub fn newline(&self) {
+        let mut state = self.state();
+        let row = state.cursor.row;
+        crate::input::handle_new_line(&mut state.buffer, &mut state.cursor);
+        state.invalidate_from(row);
     }
 
     /// Deletes the character before the cursor; at a row's start, merges
     /// that row into the previous one. A no-op at the document's start.
-    pub fn backspace(&mut self) {
-        let row = self.cursor.row;
-        crate::input::handle_backspace(&mut self.buffer, &mut self.cursor);
+    pub fn backspace(&self) {
+        let mut state = self.state();
+        let row = state.cursor.row;
+        crate::input::handle_backspace(&mut state.buffer, &mut state.cursor);
         // A merge shifts every row from the merged one down, so invalidate
         // one row earlier than the edit to cover both cases — a safe
         // superset (see `invalidate_from`).
-        self.invalidate_from(row.saturating_sub(1));
+        state.invalidate_from(row.saturating_sub(1));
     }
 
     /// Replaces the whole document with `text`, splitting on `\n` and
     /// dropping any prior wrap caches. A trailing newline yields a trailing
     /// empty row, matching line-based loading semantics.
-    pub fn replace_content(&mut self, text: String) {
-        self.buffer = Buffer::from_lines(text.split('\n'));
-        self.cursor = EngineCursorPosition::default();
-        self.scroll = crate::scroll::ScrollState::new();
-        self.wrap_caches.clear();
+    pub fn replace_content(&self, text: String) {
+        let mut state = self.state();
+        state.buffer = Buffer::from_lines(text.split('\n'));
+        state.cursor = EngineCursorPosition::default();
+        state.scroll = crate::scroll::ScrollState::new();
+        state.wrap_caches.clear();
     }
 
     /// Number of logical rows in the document (always at least one).
     pub fn row_count(&self) -> u64 {
-        self.buffer.row_count() as u64
+        self.state().buffer.row_count() as u64
     }
 
     /// `row`'s text. Rows past the end report the last row, so callers
     /// drawing an out-of-range caret never crash.
     pub fn line_text(&self, row: u64) -> String {
-        let row = row.min(self.buffer.row_count().saturating_sub(1) as u64) as usize;
-        self.buffer.line(row).as_str().to_string()
+        let state = self.state();
+        let row = row.min(state.buffer.row_count().saturating_sub(1) as u64) as usize;
+        state.buffer.line(row).as_str().to_string()
     }
 
     /// The whole document joined with `\n`.
     pub fn buffer_text(&self) -> String {
-        self.buffer
+        let state = self.state();
+        state
+            .buffer
             .lines()
             .iter()
             .map(|line| line.as_str())
@@ -339,14 +373,15 @@ impl EditorSession {
     /// metrics change (pinch-zoom, typeface swap). Bumping it makes the
     /// next call to [`EditorSession::wrapped_lines`] recompute for every
     /// row.
-    pub fn set_metrics_version(&mut self, version: u64) {
-        self.metrics_version = version;
-        self.wrap_caches.clear();
+    pub fn set_metrics_version(&self, version: u64) {
+        let mut state = self.state();
+        state.metrics_version = version;
+        state.wrap_caches.clear();
     }
 
     /// Current font-metrics version (see [`EditorSession::set_metrics_version`]).
     pub fn metrics_version(&self) -> u64 {
-        self.metrics_version
+        self.state().metrics_version
     }
 
     /// Computes (or returns the cached) wrap ranges for one logical row.
@@ -356,22 +391,23 @@ impl EditorSession {
     /// current `metrics_version`, matching `crate::layout::WrapCache`, so
     /// repeated draws with unchanged inputs are free after the first.
     pub fn wrapped_lines(
-        &mut self,
+        &self,
         row: u64,
         char_widths: Vec<f32>,
         viewport_width: u32,
         wrap_enabled: bool,
     ) -> Vec<WrappedLine> {
-        self.ensure_cache_len();
-        let row = row.min(self.buffer.row_count().saturating_sub(1) as u64) as usize;
-        let content = self.buffer.line(row).as_str();
+        let mut state = self.state();
+        state.ensure_cache_len();
+        let row = row.min(state.buffer.row_count().saturating_sub(1) as u64) as usize;
+        let content = state.buffer.line(row).as_str();
         let ranges = crate::layout::wrap_line(
-            &mut self.wrap_caches[row],
+            &mut state.wrap_caches[row],
             content,
             &char_widths,
             viewport_width,
             wrap_enabled,
-            self.metrics_version,
+            state.metrics_version,
         );
         ranges
             .iter()
@@ -391,24 +427,24 @@ impl EditorSession {
 
     /// Current horizontal scroll offset in pixels.
     pub fn scroll_x(&self) -> f32 {
-        self.scroll.scroll_x()
+        self.state().scroll.scroll_x()
     }
 
     /// Current vertical scroll offset in pixels.
     pub fn scroll_y(&self) -> f32 {
-        self.scroll.scroll_y()
+        self.state().scroll.scroll_y()
     }
 
     /// Recomputes scroll bounds after a content or viewport resize and
     /// re-clamps — call whenever the editor's size changes.
     pub fn update_bounds(
-        &mut self,
+        &self,
         content_width: f32,
         content_height: f32,
         viewport_width: f32,
         viewport_height: f32,
     ) {
-        self.scroll.update_bounds(
+        self.state().scroll.update_bounds(
             content_width,
             content_height,
             viewport_width,
@@ -419,14 +455,14 @@ impl EditorSession {
     /// Moves the camera just enough to keep the cursor rectangle visible
     /// with the editor's safety margin; returns whether scroll moved.
     pub fn ensure_visible(
-        &mut self,
+        &self,
         cursor_x: f32,
         cursor_y: f32,
         line_height: f32,
         viewport_width: f32,
         viewport_height: f32,
     ) -> bool {
-        self.scroll.ensure_visible(
+        self.state().scroll.ensure_visible(
             cursor_x,
             cursor_y,
             line_height,
@@ -437,19 +473,19 @@ impl EditorSession {
 
     /// Raw one-finger pan in pixels, clamped to the bounds. Cancels an
     /// in-flight fling, like the old engine did on touch-down.
-    pub fn scroll_by(&mut self, dx: f32, dy: f32) {
-        self.scroll.scroll_by(dx, dy);
+    pub fn scroll_by(&self, dx: f32, dy: f32) {
+        self.state().scroll.scroll_by(dx, dy);
     }
 
     /// Starts a fling with the gesture's release velocity (pixels/second).
-    pub fn start_fling(&mut self, velocity_x: f32, velocity_y: f32) {
-        self.scroll.start_fling(velocity_x, velocity_y);
+    pub fn start_fling(&self, velocity_x: f32, velocity_y: f32) {
+        self.state().scroll.start_fling(velocity_x, velocity_y);
     }
 
     /// Advances an in-flight fling by `dt_seconds`; returns whether it is
     /// still moving. Call once per frame from the render loop.
-    pub fn tick_fling(&mut self, dt_seconds: f32) -> bool {
-        self.scroll.tick_fling(dt_seconds)
+    pub fn tick_fling(&self, dt_seconds: f32) -> bool {
+        self.state().scroll.tick_fling(dt_seconds)
     }
 }
 
