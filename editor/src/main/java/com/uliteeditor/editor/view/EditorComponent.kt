@@ -175,18 +175,6 @@ fun EditorComponent(
     val viewportHeightPx = (editorSize.height.toFloat()).coerceAtLeast(0f)
     val wrapWidthPx = (viewportWidthPx - leftMarginPx - rightPadPx).coerceAtLeast(0f)
 
-    // Keep the gesture loop alive across layout rebuilds: a pointerInput
-    // keyed on visualLines would cancel mid-pinch every time the zoom
-    // re-measures the layout. The handler reads the *latest* lines through
-    // this state instead.
-    val visualLinesState = remember { mutableStateOf(emptyList<VisualLine>()) }
-    visualLinesState.value = visualLines
-
-    // Same "live, not captured" treatment for the pixel metrics the gesture
-    // loop reads (line height grows with the font during a pinch).
-    val lineHeightPxState = remember { mutableStateOf(lineHeightPx) }
-    lineHeightPxState.value = lineHeightPx
-
     val rebuilt = remember(session, textMeasurer, textStyle, charWidthPx, contentTick, wrapWidthPx) {
         buildEditorLayout(
             session = session,
@@ -201,6 +189,18 @@ fun EditorComponent(
         )
     }
     val visualLines = rebuilt.visualLines
+
+    // Keep the gesture loop alive across layout rebuilds: a pointerInput
+    // keyed on visualLines would cancel mid-pinch every time the zoom
+    // re-measures the layout. The handler reads the *latest* lines through
+    // this state instead.
+    val visualLinesState = remember { mutableStateOf(emptyList<VisualLine>()) }
+    visualLinesState.value = visualLines
+
+    // Same "live, not captured" treatment for the pixel metrics the gesture
+    // loop reads (line height grows with the font during a pinch).
+    val lineHeightPxState = remember { mutableStateOf(lineHeightPx) }
+    lineHeightPxState.value = lineHeightPx
 
     LaunchedEffect(rebuilt.contentWidthPx, rebuilt.contentHeightPx, wrapWidthPx, viewportHeightPx) {
         session.updateBounds(
