@@ -62,17 +62,23 @@ pub fn locate_tap(
 ) -> CursorPosition {
     // Stage 1: which row.
     let mut row = 0usize;
+    let mut found = false;
     let mut current_y = top_margin;
     for r in 0..row_count {
         let row_height = source.visual_line_count(r) as f32 * line_height;
         if adjusted_y >= current_y && adjusted_y < current_y + row_height {
             row = r;
+            found = true;
             break;
         }
         current_y += row_height;
-        row = r; // if we fall through to the last row, land there — same
-                 // fallthrough behavior `onTap` had (loop just ends with
-                 // the last assigned `row`)
+    }
+    // A tap above the top line or below the last row's band never matches,
+    // so the loop exits without a hit. `onTap` fell through with `row`
+    // holding its last assignment — the last row — so land there
+    // explicitly instead of a trailing `row = r` that reads like a bug.
+    if !found {
+        row = row_count.saturating_sub(1);
     }
     let row_start_y = row_top_y(source, row, line_height, top_margin);
 
@@ -235,5 +241,25 @@ mod tests {
         let (x, y) = cursor_screen_position(&f, CursorPosition::new(0, 8), 20.0, 100.0, 40.0);
         assert_eq!(y, 120.0); // second visual line of row 0
         assert_eq!(x, 40.0 + 20.0); // left_margin + 2 chars * 10px
+    }
+
+    #[test]
+    fn tap_above_all_content_lands_on_last_row() {
+        let f = Fixture;
+        // y=10 is above top_margin (100) — the old loop ran out of rows
+        // and `row` held its last assignment (row 1).
+        let pos = locate_tap(&f, 2, 41.0, 10.0, 20.0, 100.0, 40.0);
+        assert_eq!(pos.row, 1);
+        assert_eq!(pos.column, 0);
+    }
+
+    #[test]
+    fn tap_below_all_content_lands_on_last_row() {
+        let f = Fixture;
+        // total content is 3 visual lines * 20px = 60px tall from y=100;
+        // y=200 is past it.
+        let pos = locate_tap(&f, 2, 41.0, 200.0, 20.0, 100.0, 40.0);
+        assert_eq!(pos.row, 1);
+        assert_eq!(pos.column, 0);
     }
 }
