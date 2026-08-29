@@ -15,11 +15,12 @@ android {
 
     sourceSets {
         getByName("main") {
-            // Consumes the UniFFI bridge output produced by
-            // scripts/build-ffi.sh: Kotlin bindings under the FFI package
-            // dir, and the per-ABI cdylib (libulite_editor_core.so).
-            java.srcDir("build/generated/ffi/kotlin")
-            jniLibs.srcDir("build/generated/ffi/jniLibs")
+            // The UniFFI bindings are Kotlin sources. With AGP 9's built-in
+            // Kotlin they must be added to the AndroidSourceSet.kotlin set —
+            // java dirs are no longer folded into Kotlin compilation and
+            // kotlin.sourceSets is disallowed.
+            kotlin.directories += "build/generated/ffi/kotlin"
+            jniLibs.directories += "build/generated/ffi/jniLibs"
         }
     }
 
@@ -48,5 +49,8 @@ dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
+    // The UniFFI-generated Kotlin bridge is built on JNA (the @aar packaging
+    // bundles the Android natives JNA needs at runtime).
+    implementation("net.java.dev.jna:jna:5.19.1@aar")
     testImplementation(libs.junit)
 }

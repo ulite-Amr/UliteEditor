@@ -1,0 +1,6 @@
+# UniFFI generator configuration. `cdylib_name` must match the crate's
+# cdylib name ("ulite_editor_core" -> libulite_editor_core.so); without it
+# the generated Kotlin would System.loadLibrary() the default
+# "uniffi_ulite_editor_core" and crash with UnsatisfiedLinkError.
+[bindings.kotlin]
+cdylib_name = "ulite_editor_core"
