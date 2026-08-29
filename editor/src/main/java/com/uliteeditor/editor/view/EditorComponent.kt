@@ -183,6 +183,11 @@ fun EditorComponent(
     }
 
     val density = LocalDensity.current
+    // IME visibility, refreshed at composition so the (non-composable)
+    // gesture handler can consult it: WindowInsets.ime itself is a
+    // @Composable property and cannot be read inside pointerInput.
+    val imeVisibleState = remember { mutableStateOf(true) }
+    imeVisibleState.value = WindowInsets.ime.getBottom(density) > 0
     val viewConfiguration = LocalViewConfiguration.current
     val contentColor = MaterialTheme.colorScheme.onSurface
     val caretColor = MaterialTheme.colorScheme.primary
@@ -438,7 +443,7 @@ fun EditorComponent(
                                 // the re-show one frame so a pending hide
                                 // finishes first (composition scope hosts it;
                                 // the gesture event scope is restricted).
-                                if (WindowInsets.ime.getBottom(density) == 0) {
+                                if (!imeVisibleState.value) {
                                     interactionScope.launch {
                                         withFrameMillis { }
                                         keyboardController?.show()
