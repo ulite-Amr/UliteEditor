@@ -408,7 +408,12 @@ impl EditorSession {
         viewport_width: f32,
         viewport_height: f32,
     ) {
-        self.scroll.update_bounds(content_width, content_height, viewport_width, viewport_height);
+        self.scroll.update_bounds(
+            content_width,
+            content_height,
+            viewport_width,
+            viewport_height,
+        );
     }
 
     /// Moves the camera just enough to keep the cursor rectangle visible
@@ -421,7 +426,13 @@ impl EditorSession {
         viewport_width: f32,
         viewport_height: f32,
     ) -> bool {
-        self.scroll.ensure_visible(cursor_x, cursor_y, line_height, viewport_width, viewport_height)
+        self.scroll.ensure_visible(
+            cursor_x,
+            cursor_y,
+            line_height,
+            viewport_width,
+            viewport_height,
+        )
     }
 
     /// Raw one-finger pan in pixels, clamped to the bounds. Cancels an
@@ -561,7 +572,10 @@ mod tests {
         session.insert_text("abc".to_string());
         session.newline();
         session.insert_text("def".to_string());
-        session.set_cursor(CursorPosition { row: 99, column: 99 });
+        session.set_cursor(CursorPosition {
+            row: 99,
+            column: 99,
+        });
         // row 99 -> last row (1), column 99 -> its end (3)
         assert_eq!(session.cursor(), CursorPosition { row: 1, column: 3 });
     }
