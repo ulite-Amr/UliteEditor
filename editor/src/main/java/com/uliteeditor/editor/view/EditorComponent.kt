@@ -276,7 +276,8 @@ fun EditorComponent(
                 var gestureStart: Offset? = null
                 var movedBeyondSlop = false
                 var panning = false
-                var pinchCentroid = Offset.Zero
+                // Reference span for the *incremental* scale factor (sora's
+                // ScaleGestureDetector semantics: current span / previous span).
                 var pinchSpan = 0f
                 // A finger already down when a pinch ends must not register
                 // as a fresh tap on release (it was part of the scale); any
@@ -292,44 +293,49 @@ fun EditorComponent(
                         val lines = visualLinesState.value
                         if (active.size >= 2 && !scaling) {
                             // A second finger starts the pinch: cancel any
-                            // fling/pan and lock the reference span/centroid.
+                            // fling/pan and lock the initial span reference.
                             session.startFling(0f, 0f)
                             scaling = true
                             panning = false
                             gestureStart = null
                             movedBeyondSlop = false
-                            pinchCentroid = (active[0].position + active[1].position) / 2f
                             pinchSpan = (active[0].position - active[1].position).getDistance()
                             continue
                         }
                         if (scaling) {
                             if (active.size >= 2) {
                                 val first = active.take(2)
-                                val newCentroid = (first[0].position + first[1].position) / 2f
+                                // sora anchors each event around the *current*
+                                // focal point (the two fingers' midpoint).
+                                val focus = (first[0].position + first[1].position) / 2f
                                 val newSpan = (first[0].position - first[1].position).getDistance()
-                                val scaleFactor = if (pinchSpan > 0f) newSpan / pinchSpan else 1f
-                                if (scaleFactor != 1f && scaleFactor.isFinite()) {
+                                // Incremental factor, exactly like
+                                // ScaleGestureDetector.getScaleFactor():
+                                // advance the reference span every event so the
+                                // per-step rate never compounds (the old code
+                                // divided by the *initial* span every time,
+                                // which ballooned the scale).
+                                val factor = if (pinchSpan > 0f) newSpan / pinchSpan else 1f
+                                pinchSpan = newSpan
+                                if (factor != 1f && factor.isFinite()) {
                                     // Font-size grows/shrinks with the gesture,
                                     // clamped to sora's [8sp, 26sp] input range.
-                                    val newSize = (fontSizeSp * scaleFactor)
+                                    val newSize = (fontSizeSp * factor)
                                         .coerceIn(MIN_FONT_SIZE_SP, MAX_FONT_SIZE_SP)
                                     val effective = newSize / fontSizeSp
                                     if (effective != 1f) {
-                                        // Keep the content under the pinch's focal
-                                        // point pinned: newScroll = (oldScroll +
-                                        // focus) * factor - focus (sora's formula).
+                                        // Keep the content under the focal point
+                                        // pinned: newScroll = (oldScroll + focus) *
+                                        // factor - focus (sora's onScale). The
+                                        // centroid drifts with the fingers; no
+                                        // separate pan is applied — the per-event
+                                        // re-anchor already carries it.
                                         session.setScroll(
-                                            (session.scrollX() + pinchCentroid.x) * effective - pinchCentroid.x,
-                                            (session.scrollY() + pinchCentroid.y) * effective - pinchCentroid.y,
+                                            (session.scrollX() + focus.x) * effective - focus.x,
+                                            (session.scrollY() + focus.y) * effective - focus.y,
                                         )
                                         fontSizeSp = newSize
                                     }
-                                }
-                                // Centroid movement pans the document under the fingers.
-                                val centroidDelta = newCentroid - pinchCentroid
-                                if (centroidDelta != Offset.Zero) {
-                                    session.scrollBy(-centroidDelta.x, -centroidDelta.y)
-                                    pinchCentroid = newCentroid
                                 }
                                 scrollTick++
                             } else {
