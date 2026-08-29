@@ -8,6 +8,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
@@ -269,9 +270,17 @@ fun EditorComponent(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .onSizeChanged { editorSize = it }
-            .pointerInput(session) {
+            .background(MaterialTheme.colorScheme.background),
+    ) {
+        // The visible area is inset inside a *full-bleed* background: window
+        // (status/nav/keyboard) insets are consumed here so the theme color —
+        // not the window's default — shows under the status bar.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .safeDrawingPadding()
+                .onSizeChanged { editorSize = it }
+                .pointerInput(session) {
                 val velocityTracker = VelocityTracker()
                 var gestureStart: Offset? = null
                 var movedBeyondSlop = false
@@ -456,6 +465,7 @@ fun EditorComponent(
                 textStyle = TextStyle(color = Color.Transparent, fontSize = 16.sp),
                 cursorBrush = SolidColor(Color.Transparent),
             )
+        }
         }
     }
 

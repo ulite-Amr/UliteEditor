@@ -4,8 +4,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.ui.Modifier
 import com.uliteeditor.editor.theme.UliteEditorTheme
 import com.uliteeditor.editor.view.EditorComponent
 
@@ -16,7 +14,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             UliteEditorTheme {
-                EditorComponent(modifier = Modifier.safeDrawingPadding())
+                // Window insets are consumed inside EditorComponent (behind its
+                // full-bleed background), so no padding lands on the host side;
+                // otherwise the background wouldn't cover the status-bar strip.
+                EditorComponent()
             }
         }
     }
