@@ -1,0 +1,5 @@
+# UniFFI-generated Kotlin bindings (scripts/build-ffi.sh) — formatting and
+# style belong to the generator, not us, so ktlint must leave them alone.
+# Backs up the ktlint { filter { exclude(...) } } in editor/build.gradle.kts.
+[**/uniffi/**]
+ktlint = disabled

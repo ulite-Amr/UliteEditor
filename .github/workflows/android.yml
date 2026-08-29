@@ -7,9 +7,13 @@ on:
       - 'app/**'
       - 'editor/**'
       - 'gradle/**'
+      - 'crates/**'
+      - 'scripts/**'
+      - 'rust-toolchain.toml'
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradle.properties'
+      - '.editorconfig'
       - '.github/workflows/android.yml'
   pull_request:
 
@@ -28,6 +32,18 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.0'
+
+      - name: Rust Android toolchains
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Generate UniFFI bindings + native libraries
+        run: |
+          cargo install cargo-ndk
+          cargo install uniffi_bindgen --version 0.32.0
+          scripts/build-ffi.sh
+
       - name: Format check
         run: gradle ktlintCheck --no-daemon
       - name: Unit tests + lint + assemble

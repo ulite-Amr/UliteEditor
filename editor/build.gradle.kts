@@ -13,6 +13,16 @@ android {
         minSdk = 24
     }
 
+    sourceSets {
+        getByName("main") {
+            // Consumes the UniFFI bridge output produced by
+            // scripts/build-ffi.sh: Kotlin bindings under the FFI package
+            // dir, and the per-ABI cdylib (libulite_editor_core.so).
+            java.srcDir("build/generated/ffi/kotlin")
+            jniLibs.srcDir("build/generated/ffi/jniLibs")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -26,6 +36,12 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+ktlint {
+    filter {
+        exclude("**/uniffi/**")
     }
 }
 
