@@ -41,6 +41,7 @@ mod tests {
         let original = CursorPosition::new(2, 5);
         let mut copy = original;
         copy.row = 9;
+        assert_eq!(copy.row, 9);
         assert_eq!(original, CursorPosition::new(2, 5));
     }
 
