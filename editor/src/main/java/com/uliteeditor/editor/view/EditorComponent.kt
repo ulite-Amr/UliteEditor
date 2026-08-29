@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -32,16 +33,17 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.input.TextRange
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -98,12 +100,14 @@ fun EditorComponent(
     val textMeasurer = rememberTextMeasurer()
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
 
     var contentTick by remember { mutableIntStateOf(0) }
     var scrollTick by remember { mutableIntStateOf(0) }
     var blinkVisible by remember { mutableStateOf(true) }
     var editorSize by remember { mutableStateOf(IntSize.Zero) }
+    var editing by remember { mutableStateOf(false) }
 
     var imeField by remember { mutableStateOf(TextFieldValue(session.bufferText())) }
 
@@ -318,7 +322,8 @@ fun EditorComponent(
                 },
                 modifier = Modifier
                     .fillMaxSize()
-                    .focusRequester(focusRequester),
+                    .focusRequester(focusRequester)
+                    .onFocusChanged { editing = it.isFocused },
                 textStyle = TextStyle(color = Color.Transparent, fontSize = 16.sp),
                 cursorBrush = SolidColor(Color.Transparent),
             )
@@ -326,7 +331,10 @@ fun EditorComponent(
     }
 
     BackHandler {
-        if (keyboardController?.isVisible == true) {
+        if (editing) {
+            // First back: drop the keyboard and the field's focus; the next
+            // back falls through to the host's default (exit).
+            focusManager.clearFocus()
             keyboardController?.hide()
         } else {
             backDispatcher?.onBackPressed()
@@ -484,9 +492,9 @@ private fun rowColAtByteOffset(text: String, byteOffset: Int): Pair<Int, Int> {
 /** Byte offset of the cursor (sum of row byte-lengths before it, plus its column). */
 private fun absoluteByteOffsetOfCursor(session: EditorSession): Long {
     val cursor = session.cursor()
-    var bytes = cursor.column
+    var bytes = cursor.column.toLong()
     for (row in 0 until cursor.row.toInt()) {
-        bytes += utf8Length(session.lineText(row.toULong())) + 1
+        bytes += utf8Length(session.lineText(row.toULong())).toLong() + 1L
     }
     return bytes
 }
