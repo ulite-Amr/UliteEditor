@@ -39,12 +39,6 @@ kotlin {
     }
 }
 
-ktlint {
-    filter {
-        exclude("**/uniffi/**")
-    }
-}
-
 dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
