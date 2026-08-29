@@ -59,6 +59,21 @@ import uniffi.ulite_editor_core.VisualLine
 import uniffi.ulite_editor_core.cursorScreenPosition
 import uniffi.ulite_editor_core.locateTap
 
+/**
+ * Live editor state a host can render into its own UI (an info bar in the
+ * sample app). The library only reports; it never displays this — apps that
+ * consume the component decide what to do with it.
+ */
+data class EditorMetrics(
+    val line: ULong,
+    val column: ULong,
+    /** Absolute cursor position in UTF-16 code units. */
+    val charIndex: Long,
+    val scrollX: Float,
+    val scrollY: Float,
+    val fontSizeSp: Float,
+)
+
 private const val FONT_SIZE_SP = 14
 private const val LINE_HEIGHT_SP = 22
 private const val TOP_MARGIN_DP = 12
@@ -108,6 +123,7 @@ private const val MAX_FONT_SIZE_SP = 26f
 @Composable
 fun EditorComponent(
     modifier: Modifier = Modifier,
+    onMetricsChange: ((EditorMetrics) -> Unit)? = null,
 ) {
     val session = remember { EditorSession() }
     val textMeasurer = rememberTextMeasurer()
@@ -491,6 +507,33 @@ fun EditorComponent(
                     }
                 }
                 lastFrameMillis = frameMillis
+            }
+        }
+    }
+
+    // Emit live metrics to the host once per frame, but only when a value
+    // actually changed, so listeners can react without constant churn.
+    LaunchedEffect(session, onMetricsChange) {
+        if (onMetricsChange == null) return@LaunchedEffect
+        var last: EditorMetrics? = null
+        while (true) {
+            withFrameMillis {
+                val cursor = session.cursor()
+                val current = EditorMetrics(
+                    line = cursor.row,
+                    column = cursor.column,
+                    charIndex = utf16IndexAtByteOffset(
+                        session.bufferText(),
+                        absoluteByteOffsetOfCursor(session),
+                    ).toLong(),
+                    scrollX = session.scrollX(),
+                    scrollY = session.scrollY(),
+                    fontSizeSp = fontSizeSp,
+                )
+                if (current != last) {
+                    last = current
+                    onMetricsChange(current)
+                }
             }
         }
     }
