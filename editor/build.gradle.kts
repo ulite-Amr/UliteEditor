@@ -48,6 +48,7 @@ kotlin {
 dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
+    implementation(libs.compose.foundation)
     implementation(libs.compose.material3)
     // The UniFFI-generated Kotlin bridge is built on JNA (the @aar packaging
     // bundles the Android natives JNA needs at runtime).

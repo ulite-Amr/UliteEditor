@@ -4,8 +4,10 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import com.uliteeditor.app.sample.EditorBridgeSample
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.ui.Modifier
 import com.uliteeditor.editor.theme.UliteEditorTheme
+import com.uliteeditor.editor.view.EditorComponent
 
 class MainActivity : ComponentActivity() {
 
@@ -14,7 +16,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             UliteEditorTheme {
-                EditorBridgeSample()
+                EditorComponent(modifier = Modifier.safeDrawingPadding())
             }
         }
     }
