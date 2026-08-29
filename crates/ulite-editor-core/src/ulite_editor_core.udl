@@ -82,6 +82,7 @@ interface EditorSession {
   void update_bounds(f32 content_width, f32 content_height, f32 viewport_width, f32 viewport_height);
   boolean ensure_visible(f32 cursor_x, f32 cursor_y, f32 line_height, f32 viewport_width, f32 viewport_height);
   void scroll_by(f32 dx, f32 dy);
+  void set_scroll(f32 x, f32 y);
   void start_fling(f32 velocity_x, f32 velocity_y);
   boolean tick_fling(f32 dt_seconds);
 };

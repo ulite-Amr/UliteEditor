@@ -142,6 +142,21 @@ impl ScrollState {
         self.scroll_y = (self.scroll_y + dy).clamp(0.0, self.max_scroll_y);
     }
 
+    /// Sets the scroll position absolutely, clamped to the bounds, and
+    /// cancels any in-flight fling.
+    ///
+    /// There is no old counterpart: the old code only ever scrolled
+    /// relatively (`scrollBy`) or via `OverScroller`/`ensureVisible`.
+    /// Pinch-zoom (new scope) needs absolute positioning so it can re-anchor
+    /// the camera around the focal point of a scale gesture — sora-editor's
+    /// convention is `newScroll = (oldScroll + focus) * scaleFactor - focus`.
+    pub fn set_scroll(&mut self, x: f32, y: f32) {
+        self.velocity_x = 0.0;
+        self.velocity_y = 0.0;
+        self.scroll_x = x.clamp(0.0, self.max_scroll_x);
+        self.scroll_y = y.clamp(0.0, self.max_scroll_y);
+    }
+
     /// Starts a fling with the given release velocity (pixels/second).
     /// New physics, see the struct doc comment — not a port of
     /// `OverScroller.fling`.
@@ -230,6 +245,21 @@ mod tests {
         s.update_bounds(500.0, 500.0, 400.0, 400.0);
         s.scroll_by(10_000.0, -10_000.0);
         assert_eq!(s.scroll_x(), s.max_scroll_x);
+        assert_eq!(s.scroll_y(), 0.0);
+    }
+
+    #[test]
+    fn set_scroll_clamps_absolutely_and_cancels_fling() {
+        let mut s = ScrollState::new();
+        s.update_bounds(1000.0, 1000.0, 400.0, 400.0);
+        s.start_fling(500.0, 500.0);
+        s.set_scroll(200.0, 30_000.0);
+        assert_eq!(s.scroll_x(), 200.0);
+        assert_eq!(s.scroll_y(), s.max_scroll_y);
+        assert_eq!(s.velocity_x, 0.0);
+        assert_eq!(s.velocity_y, 0.0);
+        s.set_scroll(-500.0, -500.0);
+        assert_eq!(s.scroll_x(), 0.0);
         assert_eq!(s.scroll_y(), 0.0);
     }
 

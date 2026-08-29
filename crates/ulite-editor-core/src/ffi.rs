@@ -485,6 +485,13 @@ impl EditorSession {
         self.state().scroll.scroll_by(dx, dy);
     }
 
+    /// Sets the scroll position absolutely (pixels), clamped to the bounds,
+    /// and cancels any in-flight fling. Pinch-zoom re-anchors the camera
+    /// around its focal point with this (sora-editor's scale convention).
+    pub fn set_scroll(&self, x: f32, y: f32) {
+        self.state().scroll.set_scroll(x, y);
+    }
+
     /// Starts a fling with the gesture's release velocity (pixels/second).
     pub fn start_fling(&self, velocity_x: f32, velocity_y: f32) {
         self.state().scroll.start_fling(velocity_x, velocity_y);
