@@ -122,8 +122,8 @@ fun EditorBridgeSample() {
         textMeasurer.measure(AnnotatedString("M"), textStyle).size.width.toFloat()
     }
 
-    val viewportWidthPx = with(density) { editorSize.width.toPx() }
-    val viewportHeightPx = with(density) { editorSize.height.toPx() }
+    val viewportWidthPx = (editorSize.width.toFloat()).coerceAtLeast(0f)
+    val viewportHeightPx = (editorSize.height.toFloat()).coerceAtLeast(0f)
     val wrapWidthPx = (viewportWidthPx - leftMarginPx - rightPadPx).coerceAtLeast(0f)
 
     val rebuilt = remember(session, textMeasurer, textStyle, charWidthPx, contentTick, wrapEnabled, wrapWidthPx) {
@@ -166,8 +166,8 @@ fun EditorBridgeSample() {
             topMarginPx,
             leftMarginPx,
         )
-        val viewWidth = with(density) { editorSize.width.toPx() }
-        val viewHeight = with(density) { editorSize.height.toPx() }
+        val viewWidth = editorSize.width.toFloat().coerceAtLeast(0f)
+        val viewHeight = editorSize.height.toFloat().coerceAtLeast(0f)
         session.ensureVisible(caret.x, caret.y, lineHeightPx, viewWidth, viewHeight)
         caretContent = Offset(caret.x, caret.y)
         contentTick++
