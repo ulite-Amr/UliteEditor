@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.uliteeditor.editor.ime.EditorImeState
 import java.lang.System
+import kotlin.math.roundToInt
 
 /**
  * The editor's primary screen.
@@ -56,6 +57,7 @@ fun EditorScreen(state: EditorImeState = remember { EditorImeState() }) {
     val content = state.content
     val textPadding = 16.dp
     val density = LocalDensity.current
+    val textPaddingPx = with(density) { textPadding.toPx() }
 
     Box(
         Modifier
@@ -93,12 +95,10 @@ fun EditorScreen(state: EditorImeState = remember { EditorImeState() }) {
                 alpha = if (isIdle) 0f else caretAlpha,
                 heightPx = rect?.height ?: with(density) { 20.dp.toPx() },
                 modifier = Modifier.offset {
-                    with(density) {
-                        IntOffset(
-                            x = roundToPx(textPadding.toPx() + (rect?.left ?: 0f)),
-                            y = roundToPx(textPadding.toPx() + (rect?.top ?: 0f)),
-                        )
-                    }
+                    IntOffset(
+                        x = (textPaddingPx + (rect?.left ?: 0f)).roundToInt(),
+                        y = (textPaddingPx + (rect?.top ?: 0f)).roundToInt(),
+                    )
                 },
             )
         }
