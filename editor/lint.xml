@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- The UniFFI-generated bindings (scripts/build-ffi.sh) may reference
+         APIs above minSdk 24 (e.g. java.lang.ref.Cleaner) and are the
+         generator's code, not ours. Scope the NewApi check to that tree so
+         hand-written sources keep full API-level scrutiny. -->
+    <issue id="NewApi">
+        <ignore path="**/build/generated/ffi/**" />
+    </issue>
+</lint>

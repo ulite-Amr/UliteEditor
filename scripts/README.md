@@ -1,11 +1,13 @@
 # Repo Scripts
 
 Shell helpers for the agent workflow defined in `AGENTS.md` (§1 task flow,
-§7.5 CI/`gh`). They keep every repo operation reproducible and safe — most
-notably: **no script here ever executes a build toolchain**. The operator
-works from a mobile device and CI is the only verification path (root
-`AGENTS.md` Rule #1 overrides the repo's §2 quick-check allowance), so these
-scripts deal in repo *state* and GitHub data, never compilers or test runs.
+§7.5 CI/`gh`). They keep every repo operation reproducible and safe —
+**one script is the exception and is called out below**: `build-ffi.sh` is
+the FFI *producer* and runs a real Rust/NDK build, but only on a machine
+built for it (the android CI job); the operator works from a mobile device
+and can never run it locally (root `AGENTS.md` Rule #1 overrides the repo's
+§2 quick-check allowance). Every other script deals in repo *state* and
+GitHub data, never compilers or test runs.
 
 Every script is conservative: read-only unless its job is to create (a
 branch, a PR), refuses to run in the wrong state, and prints a pointer to the
@@ -65,6 +67,19 @@ on `main` (PRs required, 1 approving review, the required status checks,
 direct pushes disabled). Refuses to run until `.github/workflows/ci.yml`
 exists on `origin/main`, because protecting before the checks exist would
 lock everyone out. Idempotent — re-running reapplies the same settings.
+
+## `build-ffi.sh`
+
+The UniFFI bridge **producer** — the single exception to the repo's
+no-local-build rule. It runs `uniffi-bindgen generate` (Kotlin bindings) and
+`cargo ndk build --release` (per-ABI cdylib) for the `:editor` module,
+writing into the gitignored `editor/build/generated/ffi/` (bindings under
+`kotlin/uniffi/…`, shared objects under `jniLibs/{arm64-v8a,armeabi-v7a,x86_64}/`).
+Requires `cargo-ndk` on PATH; the UniFFI generator needs no install — it's
+the crate's own `uniffi-bindgen` binary (see the crate's `Cargo.toml`),
+version-locked to the scaffolded library by construction. Never run on the
+operator's mobile dev box — the android CI job installs `cargo-ndk` and
+invokes the script before any Gradle task.
 
 ---
 
