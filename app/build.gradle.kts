@@ -19,7 +19,13 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Testing-speed release: R8 on, signed with the debug key so
+            // nobody on the device side needs a keystore, and never published
+            // to any store. The "-test" suffix separates these builds from a
+            // future publishable release.
+            isMinifyEnabled = true
+            signingConfig = signingConfigs.getByName("debug")
+            versionNameSuffix = "-test"
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
