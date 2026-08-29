@@ -31,6 +31,11 @@ android {
     buildFeatures {
         compose = true
     }
+
+    lint {
+        // Path-scopes NewApi off the UniFFI-generated bindings (see lint.xml).
+        lintConfig = file("lint.xml")
+    }
 }
 
 kotlin {
