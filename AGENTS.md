@@ -77,26 +77,33 @@ A task without a corresponding progress log entry is considered incomplete, even
 
 ## 7.5 CI, Merging, and `gh` Usage — STRICT
 
-- CI runs the required checks defined in `.github/workflows/ci.yml` on every
-  PR. `check` is a debug-only build for sanity — never a release build
-  (consistent with §2); the crate itself denies `missing_docs` and broken
-  intra-doc links.
+- CI runs the required checks on every PR: `lint`, `test`, `check`, and
+  `docs` from `.github/workflows/ci.yml`, plus `build` from
+  `.github/workflows/android.yml`. `check` is a debug-only Rust build for
+  sanity — never a release build (consistent with §2); the crate itself
+  denies `missing_docs` and broken intra-doc links.
 - The agent may use `gh` freely for **read-only and PR-creation** actions:
   checking CI status (`scripts/ci-status.sh`), opening a PR
   (`scripts/open-pr.sh`), downloading CI artifacts
   (`scripts/download-apk.sh`), reading issues/PRs, commenting.
-- **The agent must never merge a PR, under any circumstance** — not
-  `gh pr merge`, not the GitHub UI equivalent, not by editing branch
-  protection to route around it. Only the repo owner approves and merges.
-  This holds even if all checks pass and the change looks trivial.
-- `main` is protected at the repo level (`scripts/setup-branch-protection.sh`,
-  run once by the owner) — PRs, 1 approval, and all 3 checks are required,
-  direct pushes are disabled. The project's opencode config
-  (`.opencode/opencode.json`, local-only and gitignored) additionally denies
-  the `gh pr merge`/force-push bash patterns at the tool-permission level, so
-  the agent is blocked from even attempting them. Both are backstops, not a
-  substitute for the rule above: follow the rule even where the platform or
-  the tool config would technically stop you anyway.
+- **Merging is the maintainer's call.** By default the agent must never merge
+  a PR, via `gh pr merge`, the GitHub UI, or by routing around branch
+  protection. The maintainer may delegate merging per phase (stated in the
+  task prompt); while delegated, the agent merges a PR only when (1) every
+  required check is green and (2) the diff preview confirms the change
+  matches the declared scope — then `gh pr merge --squash --delete-branch`.
+  Delegation revokes default, not judgment: never merge red checks, and hand
+  anything ambiguous back to the maintainer.
+- `main` is meant to be protected at the repo level
+  (`scripts/setup-branch-protection.sh`) — PRs, 0 required reviews, and the
+  checks above required, direct pushes disabled. Branch protection needs a
+  paid GitHub plan or a public repo, so on the free/private tier it cannot be
+  enabled; re-run the script once the plan or visibility allows. In the
+  meantime the project's opencode config (`.opencode/opencode.json`,
+  local-only and gitignored) denies the `gh pr merge`/force-push bash
+  patterns at the tool-permission level. Both are backstops, not a
+  substitute for the rules above: follow them even where the platform or the
+  tool config would technically let you.
 - Use `scripts/local-check.sh` before pushing — it's the token-cheap way to
   catch what CI would catch, without waiting on/parsing full CI logs.
 
