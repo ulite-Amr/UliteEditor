@@ -3,7 +3,10 @@
 # must not shrink, rename, or optimize them away.
 -keep class uniffi.ulite_editor_core.** { *; }
 
-# JNA itself loads native symbols and interfaces reflectively.
--keep class net.java.dev.jna.** { *; }
--dontwarn net.java.dev.jna.**
+# JNA loads native symbols and interface classes reflectively at runtime.
+# NOTE: "net.java.dev.jna" is the Maven group coordinate; the runtime Java
+# package is com.sun.jna. Keeping the group coordinate matches nothing and
+# lets R8 shrink JNA, which crashes the first native call (NoClassDefFound).
+-keep class com.sun.jna.** { *; }
+-dontwarn com.sun.jna.**
 -keepattributes Signature, InnerClasses, *Annotation*
