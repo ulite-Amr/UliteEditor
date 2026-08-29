@@ -7,7 +7,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.BasicTextField
@@ -20,6 +22,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
@@ -144,6 +147,13 @@ fun EditorComponent(
     val interactionScope = rememberCoroutineScope()
 
     fun syncImeField() {
+        // While the IME is composing (suggestions / autocorrect / multi-tap),
+        // its text lives only in the field, not in the engine buffer:
+        // rewriting the field cancels composing and resets the keyboard — the
+        // suggestion strip flickers and a symbols/emojis layout snaps back to
+        // letters. Leave the field alone until the IME commits (onValueChange
+        // with composing == Unset).
+        if (imeField.composing != TextRange.Unset) return
         val current = session.bufferText()
         val selection = TextRange(
             utf16IndexAtByteOffset(current, absoluteByteOffsetOfCursor(session)),
@@ -420,14 +430,19 @@ fun EditorComponent(
                                 )
                                 session.setCursor(CursorPosition(hit.row, hit.column))
                                 focusRequester.requestFocus()
-                                // A back press hid the keyboard; focus alone
-                                // won't relaunch it after keyboardController.hide().
-                                // Delay the re-show one frame so a pending hide
+                                // Re-raise the keyboard after a back press hid it
+                                // (focus alone won't relaunch it), but only when
+                                // it is not already up: re-showing an open
+                                // keyboard restarts the IME session and snaps a
+                                // symbols/emojis layout back to letters. Delay
+                                // the re-show one frame so a pending hide
                                 // finishes first (composition scope hosts it;
                                 // the gesture event scope is restricted).
-                                interactionScope.launch {
-                                    withFrameMillis { }
-                                    keyboardController?.show()
+                                if (WindowInsets.ime.getBottom(density) == 0) {
+                                    interactionScope.launch {
+                                        withFrameMillis { }
+                                        keyboardController?.show()
+                                    }
                                 }
                                 scrollTick++
                             }
@@ -469,10 +484,17 @@ fun EditorComponent(
             BasicTextField(
                 value = imeField,
                 onValueChange = { newValue ->
-                    if (applyImeEdit(session, newValue.text)) {
-                        contentTick++
+                    if (newValue.composing != TextRange.Unset) {
+                        // Mid-compose: mirror the IME's text in the field but
+                        // keep it out of the engine buffer; the engine sees a
+                        // single edit when the IME commits (composing == Unset).
+                        imeField = newValue
+                    } else {
+                        if (applyImeEdit(session, newValue.text)) {
+                            contentTick++
+                        }
+                        syncImeField()
                     }
-                    syncImeField()
                 },
                 modifier = Modifier
                     .fillMaxSize()
@@ -512,9 +534,15 @@ fun EditorComponent(
     }
 
     // Emit live metrics to the host once per frame, but only when a value
-    // actually changed, so listeners can react without constant churn.
-    LaunchedEffect(session, onMetricsChange) {
-        if (onMetricsChange == null) return@LaunchedEffect
+    // actually changed, so listeners can react without constant churn. The
+    // effect keys on the session only: the host's callback lambda changes
+    // identity on every host recomposition, and restarting the loop on that
+    // would reset `last` each frame → an emit → a host recomposition → a
+    // restart feedback loop. rememberUpdatedState reads the freshest lambda
+    // inside the stable loop instead.
+    val metricsListener = rememberUpdatedState(onMetricsChange)
+    LaunchedEffect(session) {
+        if (metricsListener.value == null) return@LaunchedEffect
         var last: EditorMetrics? = null
         while (true) {
             withFrameMillis {
@@ -532,7 +560,7 @@ fun EditorComponent(
                 )
                 if (current != last) {
                     last = current
-                    onMetricsChange(current)
+                    metricsListener.value?.invoke(current)
                 }
             }
         }
