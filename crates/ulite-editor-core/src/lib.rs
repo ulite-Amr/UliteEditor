@@ -1,9 +1,12 @@
+#![deny(missing_docs)]
+#![deny(rustdoc::broken_intra_doc_links)]
+
 //! Buffer, cursor, wrap, hit-test, scroll, and text-direction logic for
 //! UliteEditor.
 //!
 //! This crate is deliberately UI-free: no rendering, no animation, no
 //! text measurement, no platform APIs. Those stay on the Compose side —
-//! see `../../reference/PORTING_NOTES.md` for exactly which old
+//! see `../../../reference/PORTING_NOTES.md` for exactly which old
 //! (Android/Java) file each module here replaces, and why the split
 //! landed where it did.
 //!
