@@ -270,6 +270,7 @@ fun EditorComponent(
             .background(MaterialTheme.colorScheme.background)
             .onSizeChanged { editorSize = it }
             .pointerInput(session) {
+                val pointerScope = this
                 val velocityTracker = VelocityTracker()
                 var gestureStart: Offset? = null
                 var movedBeyondSlop = false
@@ -389,9 +390,9 @@ fun EditorComponent(
                                 focusRequester.requestFocus()
                                 // A back press hid the keyboard; focus alone
                                 // won't relaunch it after keyboardController.hide().
-                                // Await one frame on the outer pointer scope
-                                // (the event scope is restricted) then re-show.
-                                launch {
+                                // The event scope is restricted, so await the
+                                // frame on the outer pointer scope first.
+                                pointerScope.launch {
                                     withFrameMillis { }
                                     keyboardController?.show()
                                 }
