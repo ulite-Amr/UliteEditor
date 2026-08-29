@@ -152,8 +152,9 @@ fun EditorComponent(
         // rewriting the field cancels composing and resets the keyboard — the
         // suggestion strip flickers and a symbols/emojis layout snaps back to
         // letters. Leave the field alone until the IME commits (onValueChange
-        // with composing == Unset).
-        if (imeField.composing != TextRange.Unset) return
+        // where composition is null; the IME's composing text then lands as a
+        // single edit in the engine).
+        if (imeField.composition != null) return
         val current = session.bufferText()
         val selection = TextRange(
             utf16IndexAtByteOffset(current, absoluteByteOffsetOfCursor(session)),
@@ -489,10 +490,10 @@ fun EditorComponent(
             BasicTextField(
                 value = imeField,
                 onValueChange = { newValue ->
-                    if (newValue.composing != TextRange.Unset) {
+                    if (newValue.composition != null) {
                         // Mid-compose: mirror the IME's text in the field but
                         // keep it out of the engine buffer; the engine sees a
-                        // single edit when the IME commits (composing == Unset).
+                        // single edit when the IME commits (composition == null).
                         imeField = newValue
                     } else {
                         if (applyImeEdit(session, newValue.text)) {
