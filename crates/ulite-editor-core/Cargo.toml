@@ -9,3 +9,7 @@ license = "GPL-3.0-or-later"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [dependencies]
+uniffi = "0.32.0"
+
+[build-dependencies]
+uniffi = { version = "0.32.0", features = ["build"] }

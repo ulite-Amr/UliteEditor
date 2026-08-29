@@ -1,0 +1,87 @@
+// The UniFFI interface definition for ulite-editor-core — the contract
+// `scripts/build-ffi.sh` generates Kotlin bindings from. Changes here must
+// be mirrored in `ffi.rs` (Rust side) and in the Kotlin sample app.
+//
+// Design notes:
+// - Byte offsets travel as `u64` (`f32` only for pixel geometry): the
+//   engine stays `usize`/byte-indexed, and the bridge widens at the edge,
+//   exactly the adjustment made for the own-`CursorPosition` name clash.
+// - Geometry functions take the caller's measured visual lines rather than
+//   measuring text itself — this crate never measures (same split as the
+//   internal API).
+
+namespace ulite_editor_core {
+  boolean is_rtl(string text);
+  CursorPosition locate_tap(
+    sequence<VisualLine> visual_lines,
+    u64 row_count,
+    f32 adjusted_x,
+    f32 adjusted_y,
+    f32 line_height,
+    f32 top_margin,
+    f32 left_margin
+  );
+  Point cursor_screen_position(
+    sequence<VisualLine> visual_lines,
+    CursorPosition cursor,
+    f32 line_height,
+    f32 top_margin,
+    f32 left_margin
+  );
+};
+
+dictionary CursorPosition {
+  u64 row;
+  u64 column;
+};
+
+dictionary Point {
+  f32 x;
+  f32 y;
+};
+
+dictionary VisualLine {
+  u64 row;
+  u64 byte_start;
+  string text;
+  sequence<f32> char_widths;
+};
+
+dictionary WrappedLine {
+  u64 byte_start;
+  u64 byte_end;
+  string text;
+};
+
+interface EditorSession {
+  constructor();
+  CursorPosition cursor();
+  void set_cursor(CursorPosition position);
+  void insert_char(string ch);
+  void insert_text(string text);
+  void newline();
+  void backspace();
+  void replace_content(string text);
+
+  u64 row_count();
+  string line_text(u64 row);
+  string buffer_text();
+
+  void set_metrics_version(u64 version);
+  u64 metrics_version();
+
+  sequence<WrappedLine> wrapped_lines(
+    u64 row,
+    sequence<f32> char_widths,
+    u32 viewport_width,
+    boolean wrap_enabled
+  );
+
+  f32 scroll_x();
+  f32 scroll_y();
+  void update_bounds(f32 content_width, f32 content_height, f32 viewport_width, f32 viewport_height);
+  boolean ensure_visible(f32 cursor_x, f32 cursor_y, f32 line_height, f32 viewport_width, f32 viewport_height);
+  void scroll_by(f32 dx, f32 dy);
+  void start_fling(f32 velocity_x, f32 velocity_y);
+  boolean tick_fling(f32 dt_seconds);
+};
