@@ -270,7 +270,7 @@ fun EditorBridgeSample() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(left = LEFT_MARGIN_DP.dp + 4.dp, top = TOP_MARGIN_DP.dp + 4.dp),
+                        .padding(start = LEFT_MARGIN_DP.dp + 4.dp, top = TOP_MARGIN_DP.dp + 4.dp),
                 )
             }
             Canvas(Modifier.fillMaxSize()) {
