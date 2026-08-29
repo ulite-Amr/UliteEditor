@@ -49,7 +49,7 @@ impl CursorPosition {
 
     /// Narrows an FFI record back to the engine type. Callers clamp
     /// values before converting, so the `as` truncation never loses bits.
-    fn to_engine(self) -> EngineCursorPosition {
+    fn into_engine(self) -> EngineCursorPosition {
         EngineCursorPosition::new(self.row as usize, self.column as usize)
     }
 }
@@ -181,7 +181,7 @@ pub fn cursor_screen_position(
 ) -> Point {
     let (x, y) = crate::hit_test::cursor_screen_position(
         &VisualLineSource(&visual_lines),
-        cursor.to_engine(),
+        cursor.into_engine(),
         line_height,
         top_margin,
         left_margin,
