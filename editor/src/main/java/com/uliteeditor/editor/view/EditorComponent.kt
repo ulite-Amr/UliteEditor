@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
@@ -123,6 +124,7 @@ fun EditorComponent(
     var fontSizeSp by remember { mutableFloatStateOf(FONT_SIZE_SP.toFloat()) }
 
     var imeField by remember { mutableStateOf(TextFieldValue(session.bufferText())) }
+    val interactionScope = rememberCoroutineScope()
 
     fun syncImeField() {
         val current = session.bufferText()
@@ -270,7 +272,6 @@ fun EditorComponent(
             .background(MaterialTheme.colorScheme.background)
             .onSizeChanged { editorSize = it }
             .pointerInput(session) {
-                val pointerScope = this
                 val velocityTracker = VelocityTracker()
                 var gestureStart: Offset? = null
                 var movedBeyondSlop = false
@@ -390,9 +391,10 @@ fun EditorComponent(
                                 focusRequester.requestFocus()
                                 // A back press hid the keyboard; focus alone
                                 // won't relaunch it after keyboardController.hide().
-                                // The event scope is restricted, so await the
-                                // frame on the outer pointer scope first.
-                                pointerScope.launch {
+                                // Delay the re-show one frame so a pending hide
+                                // finishes first (composition scope hosts it;
+                                // the gesture event scope is restricted).
+                                interactionScope.launch {
                                     withFrameMillis { }
                                     keyboardController?.show()
                                 }
