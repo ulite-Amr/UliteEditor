@@ -8,8 +8,8 @@ class EditorImeStateTest {
     @Test
     fun caretClampsToLineBounds() {
         val state = EditorImeState()
-        assertEquals(0, state.caretClamped(lineLength = 5, offset = 12))
-        assertEquals(5, state.caretClamped(lineLength = 5, offset = -2))
+        assertEquals(5, state.caretClamped(lineLength = 5, offset = 12))
+        assertEquals(0, state.caretClamped(lineLength = 5, offset = -2))
         assertEquals(3, state.caretClamped(lineLength = 3, offset = 3))
     }
 
