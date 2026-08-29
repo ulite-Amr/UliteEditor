@@ -116,7 +116,7 @@ fun EditorComponent(
         val selection = TextRange(
             utf16IndexAtByteOffset(current, absoluteByteOffsetOfCursor(session)),
         )
-        imeField = TextFieldValue(current, selection = TextRange(selection, selection))
+        imeField = TextFieldValue(current, selection = selection)
     }
 
     LaunchedEffect(session) {
