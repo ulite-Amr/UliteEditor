@@ -27,7 +27,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.roundToPx
 import com.uliteeditor.editor.ime.EditorImeState
 import java.lang.System
 
@@ -96,8 +95,8 @@ fun EditorScreen(state: EditorImeState = remember { EditorImeState() }) {
                 modifier = Modifier.offset {
                     with(density) {
                         IntOffset(
-                            x = (textPadding + (rect?.left ?: 0f).toDp()).roundToPx(),
-                            y = (textPadding + (rect?.top ?: 0f).toDp()).roundToPx(),
+                            x = roundToPx(textPadding.toPx() + (rect?.left ?: 0f)),
+                            y = roundToPx(textPadding.toPx() + (rect?.top ?: 0f)),
                         )
                     }
                 },
