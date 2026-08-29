@@ -35,8 +35,13 @@ require() {
 require cargo-ndk
 
 echo "> uniffi-bindgen generate (Kotlin bindings)"
-cargo run --manifest-path "$crate_dir/Cargo.toml" --bin uniffi-bindgen -- \
-    generate "$udl" --language kotlin --no-format --out-dir "$out_root/kotlin"
+# The generator probes the crate via `cargo metadata`, which resolves the
+# manifest from the working directory, so run it from inside the crate.
+(
+    cd "$crate_dir"
+    cargo run --bin uniffi-bindgen -- \
+        generate "$udl" --language kotlin --no-format --out-dir "$out_root/kotlin"
+)
 
 echo "> cargo ndk build (per-ABI cdylib)"
 cargo ndk -o "$out_root/jniLibs" \
