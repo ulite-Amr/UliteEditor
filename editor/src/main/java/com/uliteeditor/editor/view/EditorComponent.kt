@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import uniffi.ulite_editor_core.CursorPosition
 import uniffi.ulite_editor_core.EditorSession
 import uniffi.ulite_editor_core.VisualLine
@@ -387,10 +388,13 @@ fun EditorComponent(
                                 session.setCursor(CursorPosition(hit.row, hit.column))
                                 focusRequester.requestFocus()
                                 // A back press hid the keyboard; focus alone
-                                // won't relaunch it after keyboardController.hide(),
-                                // so show() explicitly once this frame settles.
-                                withFrameMillis { }
-                                keyboardController?.show()
+                                // won't relaunch it after keyboardController.hide().
+                                // Await one frame on the outer pointer scope
+                                // (the event scope is restricted) then re-show.
+                                launch {
+                                    withFrameMillis { }
+                                    keyboardController?.show()
+                                }
                                 scrollTick++
                             }
                             gestureStart = null
