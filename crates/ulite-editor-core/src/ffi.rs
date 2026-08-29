@@ -263,7 +263,9 @@ impl EditorSession {
     /// contents are still valid (edits never corrupt them), only the
     /// previous holder panicked while mutating.
     fn state(&self) -> MutexGuard<'_, SessionState> {
-        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Current cursor position.
@@ -276,7 +278,8 @@ impl EditorSession {
     /// its end. Rendering code can therefore forward any tap position
     /// straight here and always end up with a valid cursor.
     pub fn set_cursor(&self, position: CursorPosition) {
-        let mut state = self.state();
+        let mut guard = self.state();
+        let state = &mut *guard;
         let max_row = state.buffer.row_count().saturating_sub(1) as u64;
         let row = position.row.min(max_row) as usize;
         let column = position.column.min(state.buffer.line(row).len() as u64) as usize;
@@ -288,7 +291,8 @@ impl EditorSession {
     /// clusters); every code point is inserted, so multi-scope input can
     /// never silently truncate.
     pub fn insert_char(&self, ch: String) {
-        let mut state = self.state();
+        let mut guard = self.state();
+        let state = &mut *guard;
         let row = state.cursor.row;
         for character in ch.chars() {
             crate::input::insert_char(&mut state.buffer, &mut state.cursor, character);
@@ -300,7 +304,8 @@ impl EditorSession {
     /// past it. Newlines split into their own logical rows, so whole
     /// paragraphs can be inserted in one call.
     pub fn insert_text(&self, text: String) {
-        let mut state = self.state();
+        let mut guard = self.state();
+        let state = &mut *guard;
         let row = state.cursor.row;
         for character in text.chars() {
             if character == '\n' {
@@ -315,7 +320,8 @@ impl EditorSession {
     /// Inserts a newline at the cursor: everything from the cursor becomes a
     /// new row below it, and the cursor moves to that row's start.
     pub fn newline(&self) {
-        let mut state = self.state();
+        let mut guard = self.state();
+        let state = &mut *guard;
         let row = state.cursor.row;
         crate::input::handle_new_line(&mut state.buffer, &mut state.cursor);
         state.invalidate_from(row);
@@ -324,7 +330,8 @@ impl EditorSession {
     /// Deletes the character before the cursor; at a row's start, merges
     /// that row into the previous one. A no-op at the document's start.
     pub fn backspace(&self) {
-        let mut state = self.state();
+        let mut guard = self.state();
+        let state = &mut *guard;
         let row = state.cursor.row;
         crate::input::handle_backspace(&mut state.buffer, &mut state.cursor);
         // A merge shifts every row from the merged one down, so invalidate
@@ -397,7 +404,8 @@ impl EditorSession {
         viewport_width: u32,
         wrap_enabled: bool,
     ) -> Vec<WrappedLine> {
-        let mut state = self.state();
+        let mut guard = self.state();
+        let state = &mut *guard;
         state.ensure_cache_len();
         let row = row.min(state.buffer.row_count().saturating_sub(1) as u64) as usize;
         let content = state.buffer.line(row).as_str();
@@ -559,7 +567,7 @@ mod tests {
 
     #[test]
     fn typing_builds_text_and_advances_the_cursor() {
-        let mut session = EditorSession::new();
+        let session = EditorSession::new();
         session.insert_text("hello".to_string());
         assert_eq!(session.buffer_text(), "hello");
         assert_eq!(session.cursor(), CursorPosition { row: 0, column: 5 });
@@ -571,7 +579,7 @@ mod tests {
 
     #[test]
     fn newline_splits_into_a_second_row() {
-        let mut session = EditorSession::new();
+        let session = EditorSession::new();
         session.insert_text("hello world".to_string());
         session.newline();
         assert_eq!(session.row_count(), 2);
@@ -582,7 +590,7 @@ mod tests {
 
     #[test]
     fn insert_text_splits_newlines_into_rows() {
-        let mut session = EditorSession::new();
+        let session = EditorSession::new();
         session.insert_text("hello\nworld".to_string());
         assert_eq!(session.row_count(), 2);
         assert_eq!(session.line_text(0), "hello");
@@ -592,7 +600,7 @@ mod tests {
 
     #[test]
     fn backspace_at_a_row_start_merges_rows() {
-        let mut session = EditorSession::new();
+        let session = EditorSession::new();
         session.insert_text("hello".to_string());
         session.newline();
         session.insert_text("world".to_string());
@@ -604,7 +612,7 @@ mod tests {
 
     #[test]
     fn set_cursor_clamps_row_and_column() {
-        let mut session = EditorSession::new();
+        let session = EditorSession::new();
         session.insert_text("abc".to_string());
         session.newline();
         session.insert_text("def".to_string());
@@ -618,7 +626,7 @@ mod tests {
 
     #[test]
     fn replace_content_splits_lines_keeping_the_trailing_empty_row() {
-        let mut session = EditorSession::new();
+        let session = EditorSession::new();
         session.replace_content("a\nb\n".to_string());
         assert_eq!(session.row_count(), 3);
         assert_eq!(session.line_text(0), "a");
@@ -628,7 +636,7 @@ mod tests {
 
     #[test]
     fn wrapped_lines_wraps_to_viewport_and_reports_byte_ranges() {
-        let mut session = EditorSession::new();
+        let session = EditorSession::new();
         session.insert_text("hello world".to_string());
         let widths = vec![10.0; 11];
         let lines = session.wrapped_lines(0, widths, 120, true);
@@ -643,7 +651,7 @@ mod tests {
 
     #[test]
     fn empty_line_wraps_to_a_single_empty_range() {
-        let mut session = EditorSession::new();
+        let session = EditorSession::new();
         let lines = session.wrapped_lines(0, Vec::new(), 120, true);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].byte_start, 0);
@@ -653,7 +661,7 @@ mod tests {
 
     #[test]
     fn backspace_at_document_start_is_a_no_op() {
-        let mut session = EditorSession::new();
+        let session = EditorSession::new();
         session.backspace();
         assert_eq!(session.buffer_text(), "");
         assert_eq!(session.cursor(), CursorPosition { row: 0, column: 0 });
