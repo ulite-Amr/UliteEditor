@@ -14,6 +14,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,6 +70,15 @@ private const val BLINK_PERIOD_MS = 500L
 private const val CARET_MOVE_ANIMATION_MS = 120
 
 /**
+ * sora-editor's pinch clamp: `EditorTouchEventHandler` keeps the text size
+ * inside `scaleMinSize`..`scaleMaxSize` (8..26 sp). The base font is
+ * `FONT_SIZE_SP`; scaling moves the font (a `setTextSize`-style mechanism)
+ * and never the canvas transform.
+ */
+private const val MIN_FONT_SIZE_SP = 8f
+private const val MAX_FONT_SIZE_SP = 26f
+
+/**
  * The reusable editor composable: it owns a live [EditorSession] behind the
  * UniFFI bridge and renders it like a word processor — wrapping is decided
  * in Rust from measured character widths, taps are hit-tested by
@@ -108,6 +118,8 @@ fun EditorComponent(
     var blinkVisible by remember { mutableStateOf(true) }
     var editorSize by remember { mutableStateOf(IntSize.Zero) }
     var editing by remember { mutableStateOf(false) }
+    var scaling by remember { mutableStateOf(false) }
+    var fontSizeSp by remember { mutableFloatStateOf(FONT_SIZE_SP.toFloat()) }
 
     var imeField by remember { mutableStateOf(TextFieldValue(session.bufferText())) }
 
@@ -141,12 +153,16 @@ fun EditorComponent(
     val viewConfiguration = LocalViewConfiguration.current
     val contentColor = MaterialTheme.colorScheme.onSurface
     val caretColor = MaterialTheme.colorScheme.primary
+    // Pinch zoom scales the font (sora-editor's mechanism: setTextSize,
+    // keep the paint/canvas un-transformed); line height follows the font
+    // ratio, while margins and the caret stay physical-pixel fixed.
+    val lineHeightSp = fontSizeSp * (LINE_HEIGHT_SP.toFloat() / FONT_SIZE_SP.toFloat())
     val textStyle = MaterialTheme.typography.bodyLarge.copy(
         fontFamily = FontFamily.Monospace,
-        fontSize = FONT_SIZE_SP.sp,
-        lineHeight = LINE_HEIGHT_SP.sp,
+        fontSize = fontSizeSp.sp,
+        lineHeight = lineHeightSp.sp,
     )
-    val lineHeightPx = with(density) { LINE_HEIGHT_SP.sp.toPx() }
+    val lineHeightPx = with(density) { lineHeightSp.sp.toPx() }
     val topMarginPx = with(density) { TOP_MARGIN_DP.dp.toPx() }
     val leftMarginPx = with(density) { LEFT_MARGIN_DP.dp.toPx() }
     val rightPadPx = with(density) { RIGHT_PAD_DP.dp.toPx() }
@@ -173,6 +189,18 @@ fun EditorComponent(
         )
     }
     val visualLines = rebuilt.visualLines
+
+    // Keep the gesture loop alive across layout rebuilds: a pointerInput
+    // keyed on visualLines would cancel mid-pinch every time the zoom
+    // re-measures the layout. The handler reads the *latest* lines through
+    // this state instead.
+    val visualLinesState = remember { mutableStateOf(emptyList<VisualLine>()) }
+    visualLinesState.value = visualLines
+
+    // Same "live, not captured" treatment for the pixel metrics the gesture
+    // loop reads (line height grows with the font during a pinch).
+    val lineHeightPxState = remember { mutableStateOf(lineHeightPx) }
+    lineHeightPxState.value = lineHeightPx
 
     LaunchedEffect(rebuilt.contentWidthPx, rebuilt.contentHeightPx, wrapWidthPx, viewportHeightPx) {
         session.updateBounds(
@@ -207,15 +235,20 @@ fun EditorComponent(
         Offset(point.x, point.y)
     }
 
-    LaunchedEffect(caretContent, lineHeightPx, viewportWidthPx, viewportHeightPx) {
+    // ensure_visible must not fight the pinch's focus-anchored scroll while
+    // a scale is in flight; it settles only when the gesture ends.
+    LaunchedEffect(caretContent, lineHeightPx, viewportWidthPx, viewportHeightPx, scaling) {
+        if (scaling) return@LaunchedEffect
         if (session.ensureVisible(caretContent.x, caretContent.y, lineHeightPx, viewportWidthPx, viewportHeightPx)) {
             scrollTick++
         }
     }
 
+    // The caret tween snaps instantly during a pinch (sora skips caret
+    // animation while the size is changing) and resumes after.
     val animatedCaretX by animateFloatAsState(
         targetValue = caretContent.x,
-        animationSpec = tween(CARET_MOVE_ANIMATION_MS),
+        animationSpec = if (scaling) tween(0) else tween(CARET_MOVE_ANIMATION_MS),
         label = "caretX",
     )
 
@@ -224,17 +257,83 @@ fun EditorComponent(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .onSizeChanged { editorSize = it }
-            .pointerInput(visualLines) {
+            .pointerInput(session) {
                 val velocityTracker = VelocityTracker()
                 var gestureStart: Offset? = null
                 var movedBeyondSlop = false
                 var panning = false
+                var pinchCentroid = Offset.Zero
+                var pinchSpan = 0f
+                // A finger already down when a pinch ends must not register
+                // as a fresh tap on release (it was part of the scale); any
+                // genuinely new finger-down clears this.
+                var suppressTap = false
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull() ?: continue
-                        val position = change.position
-                        if (change.pressed) {
+                        val active = event.changes.filter { it.pressed }
+                        if (active.isNotEmpty()) {
+                            event.changes.forEach { it.consume() }
+                        }
+                        val lines = visualLinesState.value
+                        if (active.size >= 2 && !scaling) {
+                            // A second finger starts the pinch: cancel any
+                            // fling/pan and lock the reference span/centroid.
+                            session.startFling(0f, 0f)
+                            scaling = true
+                            panning = false
+                            gestureStart = null
+                            movedBeyondSlop = false
+                            pinchCentroid = (active[0].position + active[1].position) / 2f
+                            pinchSpan = (active[0].position - active[1].position).getDistance()
+                            continue
+                        }
+                        if (scaling) {
+                            if (active.size >= 2) {
+                                val first = active.take(2)
+                                val newCentroid = (first[0].position + first[1].position) / 2f
+                                val newSpan = (first[0].position - first[1].position).getDistance()
+                                val scaleFactor = if (pinchSpan > 0f) newSpan / pinchSpan else 1f
+                                if (scaleFactor != 1f && scaleFactor.isFinite()) {
+                                    // Font-size grows/shrinks with the gesture,
+                                    // clamped to sora's [8sp, 26sp] input range.
+                                    val newSize = (fontSizeSp * scaleFactor)
+                                        .coerceIn(MIN_FONT_SIZE_SP, MAX_FONT_SIZE_SP)
+                                    val effective = newSize / fontSizeSp
+                                    if (effective != 1f) {
+                                        // Keep the content under the pinch's focal
+                                        // point pinned: newScroll = (oldScroll +
+                                        // focus) * factor - focus (sora's formula).
+                                        session.setScroll(
+                                            (session.scrollX() + pinchCentroid.x) * effective - pinchCentroid.x,
+                                            (session.scrollY() + pinchCentroid.y) * effective - pinchCentroid.y,
+                                        )
+                                        fontSizeSp = newSize
+                                    }
+                                }
+                                // Centroid movement pans the document under the fingers.
+                                val centroidDelta = newCentroid - pinchCentroid
+                                if (centroidDelta != Offset.Zero) {
+                                    session.scrollBy(-centroidDelta.x, -centroidDelta.y)
+                                    pinchCentroid = newCentroid
+                                }
+                                scrollTick++
+                            } else {
+                                // One finger lifted: the pinch ends. The
+                                // composition-side ensure_visible effect keys
+                                // on `scaling` and settles the caret now. A
+                                // still-down finger is scale residue, not a tap.
+                                scaling = false
+                                suppressTap = true
+                            }
+                            continue
+                        }
+                        val down = active.firstOrNull()
+                        if (down != null) {
+                            val position = down.position
+                            if (down.pressed && !down.previousPressed) {
+                                suppressTap = false
+                            }
                             if (gestureStart == null) {
                                 gestureStart = position
                                 movedBeyondSlop = false
@@ -248,28 +347,29 @@ fun EditorComponent(
                                 }
                             }
                             if (movedBeyondSlop) {
-                                val delta = position - change.previousPosition
+                                val delta = position - down.previousPosition
                                 if (delta != Offset.Zero) {
-                                    velocityTracker.addPosition(change.uptimeMillis, position)
+                                    velocityTracker.addPosition(down.uptimeMillis, position)
                                     // Content follows the finger: the drag delta is negated
                                     // before it reaches the core camera (invariant 2).
                                     session.scrollBy(-delta.x, -delta.y)
                                     panning = true
                                     scrollTick++
                                 }
-                                change.consume()
                             }
-                        } else {
+                        }
+                        val released = event.changes.firstOrNull { !it.pressed }
+                        if (released != null) {
                             if (panning) {
                                 val velocity = velocityTracker.calculateVelocity()
                                 session.startFling(-velocity.x, -velocity.y)
-                            } else if (!movedBeyondSlop && gestureStart != null) {
+                            } else if (!movedBeyondSlop && gestureStart != null && !suppressTap) {
                                 val hit = locateTap(
-                                    visualLines,
+                                    lines,
                                     session.rowCount(),
-                                    position.x + session.scrollX(),
-                                    position.y + session.scrollY(),
-                                    lineHeightPx,
+                                    released.position.x + session.scrollX(),
+                                    released.position.y + session.scrollY(),
+                                    lineHeightPxState.value,
                                     topMarginPx,
                                     leftMarginPx,
                                 )
