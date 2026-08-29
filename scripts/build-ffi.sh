@@ -34,19 +34,21 @@ require() {
 
 require cargo-ndk
 
-echo "> uniffi-bindgen generate (Kotlin bindings)"
-# The generator probes the crate via `cargo metadata`, which resolves the
-# manifest from the working directory, so run it from inside the crate.
+# Both the bindgen and cargo-ndk probe the crate via `cargo metadata`, and
+# cargo resolves the manifest from the working directory, so the whole
+# producer runs from inside the crate (paths below are absolute).
 (
     cd "$crate_dir"
+
+    echo "> uniffi-bindgen generate (Kotlin bindings)"
     cargo run --bin uniffi-bindgen -- \
         generate "$udl" --language kotlin --no-format --out-dir "$out_root/kotlin"
-)
 
-echo "> cargo ndk build (per-ABI cdylib)"
-cargo ndk -o "$out_root/jniLibs" \
-    -t "${abis[0]}" -t "${abis[1]}" -t "${abis[2]}" \
-    build --release --manifest-path "$crate_dir/Cargo.toml"
+    echo "> cargo ndk build (per-ABI cdylib)"
+    cargo ndk -o "$out_root/jniLibs" \
+        -t "${abis[0]}" -t "${abis[1]}" -t "${abis[2]}" \
+        build --release --lib
+)
 
 echo "Done. Bindings: $out_root/kotlin/uniffi/ulite_editor_core/"
 echo "       Native: $out_root/jniLibs/{${abis[0]},${abis[1]},${abis[2]}}/libulite_editor_core.so"
