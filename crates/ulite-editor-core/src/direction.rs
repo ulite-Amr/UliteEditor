@@ -1,3 +1,7 @@
+//! Paragraph-direction detection: a first-strong-character heuristic for
+//! RTL lines that replaces the old `java.text.Bidi` call — see the `is_rtl`
+//! doc for the trade-off.
+
 /// Returns true if `text`'s first strong-direction character is RTL
 /// (Arabic, Hebrew, and their extended blocks).
 ///

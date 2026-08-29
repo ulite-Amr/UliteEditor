@@ -1,3 +1,10 @@
+//! Logical lines and the buffer that holds them, with the byte-offset
+//! mutation primitives IME/input operations build on. All edits go through
+//! the single mutation point (`Line::content_mut`); wrap caches are
+//! caller-owned and live in `layout::wrap_line` — this module is just the
+//! buffer half of replacing `TextLineModel`'s content-snapshot
+//! cache-validity check.
+
 /// One logical (unwrapped) line of text.
 ///
 /// The old code split this across two classes — `EditorState` held the
@@ -14,20 +21,24 @@ pub struct Line {
 }
 
 impl Line {
+    /// Creates a line holding `content`, with no wrap cache yet.
     pub fn new(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),
         }
     }
 
+    /// The line's text as a string slice.
     pub fn as_str(&self) -> &str {
         &self.content
     }
 
+    /// Byte length of the line's content — UTF-8 bytes, like `str::len`.
     pub fn len(&self) -> usize {
         self.content.len()
     }
 
+    /// Whether the line holds no text.
     pub fn is_empty(&self) -> bool {
         self.content.is_empty()
     }
@@ -59,30 +70,43 @@ impl Default for Buffer {
 }
 
 impl Buffer {
+    /// Creates an empty buffer holding exactly one empty line — the same
+    /// seeding `EditorState`'s constructor did, so there is always a line
+    /// to address a cursor into.
     pub fn new() -> Self {
         Self {
             lines: vec![Line::default()],
         }
     }
 
+    /// Number of logical lines. Always at least one.
     pub fn row_count(&self) -> usize {
         self.lines.len()
     }
 
+    /// Borrows the logical line at `row`. Panics if `row` is out of
+    /// bounds — callers keep it in sync with `CursorPosition::row`.
     pub fn line(&self, row: usize) -> &Line {
         &self.lines[row]
     }
 
+    /// Mutably borrows the line at `row` for direct edits; any mutation
+    /// through the returned line invalidates its wrap cache (see
+    /// `Line::content_mut`). Prefer the typed methods below.
     pub fn line_mut(&mut self, row: usize) -> &mut Line {
         &mut self.lines[row]
     }
 
+    /// All logical lines in order — read-only access for iterating and
+    /// rendering (e.g. feeding the layout layer). Mutations go through
+    /// the typed methods so the cache-invalidation rule stays in one
+    /// place.
     pub fn lines(&self) -> &[Line] {
         &self.lines
     }
 
     /// Inserts a byte at `column` in `row`'s content. `ch` is restricted
-    /// to ASCII here deliberately — see `input::insert_str` for the
+    /// to ASCII here deliberately — see `Buffer::insert_str_at` for the
     /// general case. Kept as a thin wrapper so single-character insertion
     /// (the common typing path) doesn't allocate a temporary `String`.
     pub(crate) fn insert_char_at(&mut self, row: usize, column: usize, ch: char) {

@@ -1,3 +1,6 @@
+//! Text mutation operations (insert character, newline, backspace) applied
+//! to a [`Buffer`] at a [`CursorPosition`] — the ported `InputProcessor`.
+
 use crate::buffer::Buffer;
 use crate::cursor::CursorPosition;
 
@@ -105,7 +108,7 @@ mod tests {
         let mut cursor = pos(0, 5);
         handle_new_line(&mut buffer, &mut cursor); // -> ["hello", ""]
         insert_char(&mut buffer, &mut cursor, '!'); // -> ["hello", "!"]
-        // cursor now at row 1, col 1 ("!" inserted at col 0)
+                                                    // cursor now at row 1, col 1 ("!" inserted at col 0)
         cursor.column = 0; // simulate cursor moved back to line start
         handle_backspace(&mut buffer, &mut cursor);
         assert_eq!(buffer.row_count(), 1);

@@ -1,3 +1,6 @@
+//! The scroll camera: bounds, clamping, cursor visibility, and the fling
+//! decay — the pure-math half of the old `ScrollManager`.
+
 /// Camera-follow scroll state: bounds, clamped position, and the
 /// keep-cursor-visible logic. Ports the pure-math parts of
 /// `core/engine/ScrollManager.java`.
@@ -47,14 +50,20 @@ impl Default for ScrollState {
 }
 
 impl ScrollState {
+    /// A stationary camera at (0, 0) with zero scroll bounds — call
+    /// `update_bounds` before use.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Current horizontal scroll — pixels scrolled away from the
+    /// content-space origin.
     pub fn scroll_x(&self) -> f32 {
         self.scroll_x
     }
 
+    /// Current vertical scroll — pixels scrolled away from the
+    /// content-space origin.
     pub fn scroll_y(&self) -> f32 {
         self.scroll_y
     }
@@ -120,7 +129,12 @@ impl ScrollState {
         needs_scroll
     }
 
-    /// Direct drag/pan input — matches `scrollBy`.
+    /// Direct drag/pan input, in pixels, clamped to the bounds.
+    ///
+    /// Ports `ScrollManager.scrollBy`. Unlike `ensure_visible` this never
+    /// looks at the cursor — it's raw one-finger panning, and canceling an
+    /// in-flight fling here mirrors `ScrollManager` stopping the
+    /// `OverScroller` on touch-down.
     pub fn scroll_by(&mut self, dx: f32, dy: f32) {
         self.velocity_x = 0.0;
         self.velocity_y = 0.0;
@@ -142,14 +156,18 @@ impl ScrollState {
     /// `FLING_STOP_VELOCITY`, which callers can use the way the old code
     /// used `computeScroll`'s return value.
     pub fn tick_fling(&mut self, dt_seconds: f32) -> bool {
-        if self.velocity_x.abs() < FLING_STOP_VELOCITY && self.velocity_y.abs() < FLING_STOP_VELOCITY {
+        if self.velocity_x.abs() < FLING_STOP_VELOCITY
+            && self.velocity_y.abs() < FLING_STOP_VELOCITY
+        {
             self.velocity_x = 0.0;
             self.velocity_y = 0.0;
             return false;
         }
 
-        self.scroll_x = (self.scroll_x + self.velocity_x * dt_seconds).clamp(0.0, self.max_scroll_x);
-        self.scroll_y = (self.scroll_y + self.velocity_y * dt_seconds).clamp(0.0, self.max_scroll_y);
+        self.scroll_x =
+            (self.scroll_x + self.velocity_x * dt_seconds).clamp(0.0, self.max_scroll_x);
+        self.scroll_y =
+            (self.scroll_y + self.velocity_y * dt_seconds).clamp(0.0, self.max_scroll_y);
 
         let decay = (1.0 - FLING_FRICTION_PER_SECOND).powf(dt_seconds * 60.0);
         self.velocity_x *= decay;

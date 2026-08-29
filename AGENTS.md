@@ -77,9 +77,10 @@ A task without a corresponding progress log entry is considered incomplete, even
 
 ## 7.5 CI, Merging, and `gh` Usage — STRICT
 
-- CI runs 3 required checks on every PR: `lint`, `test`, `check` (see
-  `.github/workflows/ci.yml`). `check` includes a debug-only build for
-  sanity — never a release build (consistent with §2).
+- CI runs the required checks defined in `.github/workflows/ci.yml` on every
+  PR. `check` is a debug-only build for sanity — never a release build
+  (consistent with §2); the crate itself denies `missing_docs` and broken
+  intra-doc links.
 - The agent may use `gh` freely for **read-only and PR-creation** actions:
   checking CI status (`scripts/ci-status.sh`), opening a PR
   (`scripts/open-pr.sh`), downloading CI artifacts
@@ -90,7 +91,8 @@ A task without a corresponding progress log entry is considered incomplete, even
   This holds even if all checks pass and the change looks trivial.
 - `main` is protected at the repo level (`scripts/setup-branch-protection.sh`,
   run once by the owner) — PRs, 1 approval, and all 3 checks are required,
-  direct pushes are disabled. `.opencode/opencode.json` additionally denies
+  direct pushes are disabled. The project's opencode config
+  (`.opencode/opencode.json`, local-only and gitignored) additionally denies
   the `gh pr merge`/force-push bash patterns at the tool-permission level, so
   the agent is blocked from even attempting them. Both are backstops, not a
   substitute for the rule above: follow the rule even where the platform or
@@ -101,9 +103,10 @@ A task without a corresponding progress log entry is considered incomplete, even
 ## 8. Design Work
 
 - For any Compose UI work, load the `material3-expressive` skill
-  (`.opencode/skills/material3-expressive/SKILL.md`) — it has the actual M3
-  Expressive spec (color/type/shape/motion system, current component set).
-  Don't default to generic/outdated Material patterns.
+  (`.opencode/skills/material3-expressive/SKILL.md` — local-only tooling,
+  gitignored, not part of the repo) — it has the actual M3 Expressive spec
+  (color/type/shape/motion system, current component set). Don't default to
+  generic/outdated Material patterns.
 
 ## 7. When Unsure
 

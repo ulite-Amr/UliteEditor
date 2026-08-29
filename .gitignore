@@ -1,5 +1,8 @@
 .project/
 
+# Local opencode tooling (commands, permissions, skills) — never part of the repo
+.opencode/
+
 # Rust build output
 **/target/
 
@@ -10,6 +13,9 @@ local.properties
 *.apk
 *.aab
 *.keystore
+
+# Downloaded CI artifacts
+dist/
 
 # IDE
 .idea/

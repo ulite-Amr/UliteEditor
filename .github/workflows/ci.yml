@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting (rustfmt)
+        working-directory: crates/ulite-editor-core
+        run: cargo fmt --all -- --check
+      - name: Lint (clippy, deny warnings)
+        working-directory: crates/ulite-editor-core
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run tests
+        working-directory: crates/ulite-editor-core
+        run: cargo test --all-targets --all-features
+
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Debug build sanity
+        working-directory: crates/ulite-editor-core
+        run: cargo build
