@@ -1,5 +1,8 @@
 package com.uliteeditor.app
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
@@ -29,12 +32,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Clipboard
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalClipboard
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.ClipEntry
 import androidx.compose.ui.unit.dp
 import com.uliteeditor.editor.theme.UliteEditorTheme
 import kotlinx.coroutines.delay
@@ -79,11 +79,11 @@ class CrashReportActivity : ComponentActivity() {
         )
         setContent {
             UliteEditorTheme {
-                val clipboard = LocalClipboard.current
+                val context = LocalContext.current
                 var copied by remember { mutableStateOf(false) }
                 LaunchedEffect(copied) {
                     if (copied) {
-                        copyReport(clipboard, device, threadName, cause, message, stackTrace)
+                        copyReport(context, device, threadName, cause, message, stackTrace)
                         delay(2_000L)
                         copied = false
                     }
@@ -105,16 +105,18 @@ class CrashReportActivity : ComponentActivity() {
 }
 
 private fun copyReport(
-    clipboard: Clipboard,
+    context: Context,
     device: DeviceDetails,
     threadName: String,
     cause: String,
     message: String,
     stackTrace: String,
 ) {
-    clipboard.setClipEntry(
-        ClipEntry.ofAnnotatedString(
-            AnnotatedString(buildReport(device, threadName, cause, message, stackTrace)),
+    val manager = context.getSystemService(ClipboardManager::class.java)
+    manager?.setPrimaryClip(
+        ClipData.newPlainText(
+            "UliteEditor crash report",
+            buildReport(device, threadName, cause, message, stackTrace),
         ),
     )
 }
