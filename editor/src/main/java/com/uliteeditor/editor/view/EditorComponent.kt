@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
@@ -50,6 +51,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import uniffi.ulite_editor_core.CursorPosition
 import uniffi.ulite_editor_core.EditorSession
 import uniffi.ulite_editor_core.VisualLine
@@ -122,13 +124,17 @@ fun EditorComponent(
     var fontSizeSp by remember { mutableFloatStateOf(FONT_SIZE_SP.toFloat()) }
 
     var imeField by remember { mutableStateOf(TextFieldValue(session.bufferText())) }
+    val interactionScope = rememberCoroutineScope()
 
     fun syncImeField() {
         val current = session.bufferText()
         val selection = TextRange(
             utf16IndexAtByteOffset(current, absoluteByteOffsetOfCursor(session)),
         )
-        imeField = TextFieldValue(current, selection = selection)
+        val next = TextFieldValue(current, selection = selection)
+        // Skip identical rewrites: setting the value again resets the IME's
+        // composing/suggestion state, which reads as flicker while typing.
+        if (imeField != next) imeField = next
     }
 
     LaunchedEffect(session) {
@@ -224,6 +230,14 @@ fun EditorComponent(
     // that positioned them. Keying on the cursor as well keeps taps that
     // move the caret without editing the buffer in sync.
     val cursor = session.cursor()
+    // Taps move the caret without touching the buffer; the invisible IME
+    // field must learn the new selection or the next keystroke edits at the
+    // stale spot (the "caret jumps back to where it last edited" symptom).
+    // The no-op skip in syncImeField keeps an already-correct field from
+    // being rewritten mid-edit.
+    LaunchedEffect(cursor) {
+        syncImeField()
+    }
     val caretContent = remember(rebuilt, cursor, lineHeightPx, topMarginPx, leftMarginPx) {
         val point = cursorScreenPosition(
             rebuilt.visualLines,
@@ -375,6 +389,15 @@ fun EditorComponent(
                                 )
                                 session.setCursor(CursorPosition(hit.row, hit.column))
                                 focusRequester.requestFocus()
+                                // A back press hid the keyboard; focus alone
+                                // won't relaunch it after keyboardController.hide().
+                                // Delay the re-show one frame so a pending hide
+                                // finishes first (composition scope hosts it;
+                                // the gesture event scope is restricted).
+                                interactionScope.launch {
+                                    withFrameMillis { }
+                                    keyboardController?.show()
+                                }
                                 scrollTick++
                             }
                             gestureStart = null
