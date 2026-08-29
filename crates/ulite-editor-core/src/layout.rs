@@ -66,6 +66,18 @@ pub fn wrap_line<'cache>(
     &cache.as_ref().unwrap().visual_lines
 }
 
+/// Greedy wrap computation behind `wrap_line`'s cache-miss path.
+///
+/// Returns visual-line byte ranges for `content`, where `char_widths[i]`
+/// is the width of the i-th Unicode scalar value. Empty content yields a
+/// single empty range; wrap-disabled mode (A) yields one range covering
+/// the whole line regardless of width — both mirror the corresponding
+/// `LayoutManager.wrapText` branches. Wrap mode (B) fills each visual
+/// line greedily up to `max_width = viewport - 100`, the same constant
+/// `Paint.breakText` was given, and breaks mid-word just like it did.
+/// A segment is never closed empty — which is the count>0 guard the old
+/// code needed to avoid an infinite loop, made structurally impossible
+/// here because a segment only ever closes with at least one character.
 fn compute_wrap(
     content: &str,
     char_widths: &[f32],
