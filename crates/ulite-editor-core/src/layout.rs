@@ -1,3 +1,7 @@
+//! Word-wrapping: turning one logical line plus caller-supplied per-char
+//! measurements into visual-line byte ranges, with a keyed cache. This
+//! crate never measures text itself — see `wrap_line`'s doc.
+
 use std::ops::Range;
 
 /// A line's wrap result, cached against the inputs it was computed from.
