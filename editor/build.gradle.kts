@@ -39,6 +39,15 @@ android {
 }
 
 kotlin {
+    sourceSets {
+        // The UniFFI bindings are Kotlin sources; AGP's built-in Kotlin
+        // doesn't follow the java source dir added above, so the bridge
+        // package must be declared as a Kotlin source dir directly.
+        getByName("main") {
+            kotlin.srcDir("build/generated/ffi/kotlin")
+        }
+    }
+
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
     }
