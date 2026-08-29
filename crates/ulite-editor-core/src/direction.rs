@@ -116,25 +116,25 @@ mod tests {
     #[test]
     fn newly_covered_rtl_scripts_are_detected() {
         for ch in [
-            '\u{07C0}',   // NKo
-            '\u{0800}',   // Samaritan
-            '\u{0840}',   // Mandaic
-            '\u{0860}',   // Syriac Supplement
-            '\u{0870}',   // Arabic Extended-B
-            '\u{103A0}',  // Old Persian
-            '\u{10840}',  // Imperial Aramaic
-            '\u{10900}',  // Phoenician
-            '\u{10A00}',  // Kharoshthi
-            '\u{10B00}',  // Avestan
-            '\u{10C00}',  // Old Turkic
-            '\u{10D00}',  // Hanifi Rohingya
-            '\u{10E80}',  // Yezidi
-            '\u{10EC0}',  // Arabic Extended-C
-            '\u{10F00}',  // Old Sogdian
-            '\u{10F70}',  // Old Uyghur
-            '\u{10FE0}',  // Elymaic
-            '\u{1E850}',  // Mende Kikakui
-            '\u{1E900}',  // Adlam
+            '\u{07C0}',  // NKo
+            '\u{0800}',  // Samaritan
+            '\u{0840}',  // Mandaic
+            '\u{0860}',  // Syriac Supplement
+            '\u{0870}',  // Arabic Extended-B
+            '\u{103A0}', // Old Persian
+            '\u{10840}', // Imperial Aramaic
+            '\u{10900}', // Phoenician
+            '\u{10A00}', // Kharoshthi
+            '\u{10B00}', // Avestan
+            '\u{10C00}', // Old Turkic
+            '\u{10D00}', // Hanifi Rohingya
+            '\u{10E80}', // Yezidi
+            '\u{10EC0}', // Arabic Extended-C
+            '\u{10F00}', // Old Sogdian
+            '\u{10F70}', // Old Uyghur
+            '\u{10FE0}', // Elymaic
+            '\u{1E850}', // Mende Kikakui
+            '\u{1E900}', // Adlam
         ] {
             assert!(
                 is_rtl(&ch.to_string()),
