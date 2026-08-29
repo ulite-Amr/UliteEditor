@@ -128,7 +128,10 @@ fun EditorComponent(
         val selection = TextRange(
             utf16IndexAtByteOffset(current, absoluteByteOffsetOfCursor(session)),
         )
-        imeField = TextFieldValue(current, selection = selection)
+        val next = TextFieldValue(current, selection = selection)
+        // Skip identical rewrites: setting the value again resets the IME's
+        // composing/suggestion state, which reads as flicker while typing.
+        if (imeField != next) imeField = next
     }
 
     LaunchedEffect(session) {
@@ -224,6 +227,14 @@ fun EditorComponent(
     // that positioned them. Keying on the cursor as well keeps taps that
     // move the caret without editing the buffer in sync.
     val cursor = session.cursor()
+    // Taps move the caret without touching the buffer; the invisible IME
+    // field must learn the new selection or the next keystroke edits at the
+    // stale spot (the "caret jumps back to where it last edited" symptom).
+    // The no-op skip in syncImeField keeps an already-correct field from
+    // being rewritten mid-edit.
+    LaunchedEffect(cursor) {
+        syncImeField()
+    }
     val caretContent = remember(rebuilt, cursor, lineHeightPx, topMarginPx, leftMarginPx) {
         val point = cursorScreenPosition(
             rebuilt.visualLines,
@@ -375,6 +386,11 @@ fun EditorComponent(
                                 )
                                 session.setCursor(CursorPosition(hit.row, hit.column))
                                 focusRequester.requestFocus()
+                                // A back press hid the keyboard; focus alone
+                                // won't relaunch it after keyboardController.hide(),
+                                // so show() explicitly once this frame settles.
+                                withFrameMillis { }
+                                keyboardController?.show()
                                 scrollTick++
                             }
                             gestureStart = null
