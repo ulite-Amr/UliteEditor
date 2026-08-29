@@ -1,9 +1,5 @@
 package com.uliteeditor.app
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.os.Build
 import android.os.Bundle
 import android.os.Process
 import androidx.activity.ComponentActivity
@@ -39,19 +35,11 @@ import androidx.compose.ui.unit.dp
 import com.uliteeditor.editor.theme.UliteEditorTheme
 import kotlinx.coroutines.delay
 
-/** Device + app facts shown (and copied) with a crash report. */
-internal data class DeviceDetails(
-    val model: String,
-    val manufacturer: String,
-    val androidRelease: String,
-    val sdkInt: Int,
-    val appVersion: String,
-)
-
 /**
- * A minimal professional crash report: a headline with the failing thread,
- * full device details, and the raw stack trace. "Copy report" puts the whole
- * block on the clipboard; "Close" (or back) kills the crashed process.
+ * The in-app crash screen: headline with the failing thread, device details,
+ * and the raw stack trace. It is normally reached from [CrashHandler], which
+ * has already copied the report to the clipboard — the "Copy report" button
+ * re-copies on demand. "Close" (or back) kills the crashed process.
  */
 class CrashReportActivity : ComponentActivity() {
 
@@ -64,26 +52,21 @@ class CrashReportActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        @Suppress("DEPRECATION")
-        val version = packageManager.getPackageInfo(packageName, 0)
         val threadName = intent.getStringExtra(EXTRA_THREAD).orEmpty()
         val cause = intent.getStringExtra(EXTRA_CAUSE).orEmpty()
         val message = intent.getStringExtra(EXTRA_MESSAGE).orEmpty()
         val stackTrace = intent.getStringExtra(EXTRA_STACK_TRACE).orEmpty()
-        val device = DeviceDetails(
-            model = Build.MODEL,
-            manufacturer = Build.MANUFACTURER,
-            androidRelease = Build.VERSION.RELEASE,
-            sdkInt = Build.VERSION.SDK_INT,
-            appVersion = "${version.versionName} (${version.versionCode})",
-        )
+        val device = collectDeviceDetails(this)
         setContent {
             UliteEditorTheme {
                 val context = LocalContext.current
                 var copied by remember { mutableStateOf(false) }
                 LaunchedEffect(copied) {
                     if (copied) {
-                        copyReport(context, device, threadName, cause, message, stackTrace)
+                        copyReportToClipboard(
+                            context,
+                            buildReport(device, threadName, cause, message, stackTrace),
+                        )
                         delay(2_000L)
                         copied = false
                     }
@@ -102,43 +85,6 @@ class CrashReportActivity : ComponentActivity() {
             }
         }
     }
-}
-
-private fun copyReport(
-    context: Context,
-    device: DeviceDetails,
-    threadName: String,
-    cause: String,
-    message: String,
-    stackTrace: String,
-) {
-    val manager = context.getSystemService(ClipboardManager::class.java)
-    manager?.setPrimaryClip(
-        ClipData.newPlainText(
-            "UliteEditor crash report",
-            buildReport(device, threadName, cause, message, stackTrace),
-        ),
-    )
-}
-
-private fun buildReport(
-    device: DeviceDetails,
-    threadName: String,
-    cause: String,
-    message: String,
-    stackTrace: String,
-): String = buildString {
-    appendLine("UliteEditor crash report")
-    appendLine()
-    appendLine("Device: ${device.manufacturer} ${device.model}")
-    appendLine("Android: ${device.androidRelease} (API ${device.sdkInt})")
-    appendLine("App: ${device.appVersion}")
-    appendLine("Thread: $threadName")
-    appendLine("Exception: $cause")
-    if (message.isNotBlank()) appendLine("Message: $message")
-    appendLine()
-    appendLine("Stack trace:")
-    append(stackTrace)
 }
 
 @Composable
@@ -166,8 +112,8 @@ private fun CrashReportContent(
             color = MaterialTheme.colorScheme.onBackground,
         )
         Text(
-            text = "A problem was detected. Copy the report below and share it "
-                + "with the developer before closing.",
+            text = "The report was copied to your clipboard. Paste it somewhere "
+                + "safe, then share it with the developer.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -182,16 +128,31 @@ private fun CrashReportContent(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text("Device details", style = MaterialTheme.typography.labelLarge)
-                Text("  Model: ${device.manufacturer} ${device.model}",
-                    style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                Text("  Android: ${device.androidRelease} (API ${device.sdkInt})",
-                    style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                Text("  App version: ${device.appVersion}",
-                    style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                Text("  Thread: $threadName",
-                    style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                Text("  $cause${if (message.isNotBlank()) ": $message" else ""}",
-                    style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                Text(
+                    "  Model: ${device.manufacturer} ${device.model}",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+                Text(
+                    "  Android: ${device.androidRelease} (API ${device.sdkInt})",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+                Text(
+                    "  App version: ${device.appVersion}",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+                Text(
+                    "  Thread: $threadName",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+                Text(
+                    "  $cause${if (message.isNotBlank()) ": $message" else ""}",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                )
             }
         }
 
