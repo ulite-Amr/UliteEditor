@@ -7,10 +7,12 @@
 # This is the FFI *producer* and it deliberately runs a real build, so it is
 # the exception to the repo's no-heavy-local-build culture: it must run on a
 # machine with a full Rust + Android NDK toolchain (the android CI job runs
-# it; the operator's mobile dev box cannot and never should). It requires on
-# PATH, version-matched to the crate:
-#   cargo-ndk      -> cargo install cargo-ndk
-#   uniffi-bindgen -> cargo install uniffi_bindgen --version 0.32.0
+# it; the operator's mobile dev box cannot and never should). Requires on
+# PATH:
+#   cargo-ndk -> cargo install cargo-ndk
+# The UniFFI generator needs no install — it's the crate's own `uniffi-bindgen`
+# binary (`[[bin]]` + the `cli` feature), so its version can never drift from
+# the scaffolded crate.
 #
 # Run from anywhere; paths are resolved relative to the repo root.
 
@@ -30,12 +32,11 @@ require() {
     fi
 }
 
-require uniffi-bindgen
 require cargo-ndk
 
 echo "> uniffi-bindgen generate (Kotlin bindings)"
-uniffi-bindgen generate "$udl" --language kotlin --no-format \
-    --out-dir "$out_root/kotlin"
+cargo run --manifest-path "$crate_dir/Cargo.toml" --bin uniffi-bindgen -- \
+    generate "$udl" --language kotlin --no-format --out-dir "$out_root/kotlin"
 
 echo "> cargo ndk build (per-ABI cdylib)"
 cargo ndk -o "$out_root/jniLibs" \

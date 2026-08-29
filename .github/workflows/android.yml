@@ -41,7 +41,6 @@ jobs:
       - name: Generate UniFFI bindings + native libraries
         run: |
           cargo install cargo-ndk
-          cargo install uniffi_bindgen --version 0.32.0
           scripts/build-ffi.sh
 
       - name: Format check

@@ -75,9 +75,11 @@ no-local-build rule. It runs `uniffi-bindgen generate` (Kotlin bindings) and
 `cargo ndk build --release` (per-ABI cdylib) for the `:editor` module,
 writing into the gitignored `editor/build/generated/ffi/` (bindings under
 `kotlin/uniffi/…`, shared objects under `jniLibs/{arm64-v8a,armeabi-v7a,x86_64}/`).
-Requires `uniffi-bindgen` (match the crate's `uniffi` version: 0.32.0) and
-`cargo-ndk` on PATH. Never run on the operator's mobile dev box — the android
-CI job installs the tooling and invokes it before any Gradle task.
+Requires `cargo-ndk` on PATH; the UniFFI generator needs no install — it's
+the crate's own `uniffi-bindgen` binary (see the crate's `Cargo.toml`),
+version-locked to the scaffolded library by construction. Never run on the
+operator's mobile dev box — the android CI job installs `cargo-ndk` and
+invokes the script before any Gradle task.
 
 ---
 
