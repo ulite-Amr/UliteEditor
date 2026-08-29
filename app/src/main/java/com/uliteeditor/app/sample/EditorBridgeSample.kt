@@ -45,7 +45,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.toAnnotatedString
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -120,7 +119,7 @@ fun EditorBridgeSample() {
     val rightPadPx = with(density) { RIGHT_PAD_DP.dp.toPx() }
     val cursorWidthPx = with(density) { CURSOR_WIDTH_DP.dp.toPx() }
     val charWidthPx = with(density) {
-        textMeasurer.measure("M".toAnnotatedString(), textStyle).size.width.toFloat()
+        textMeasurer.measure(AnnotatedString("M"), textStyle).size.width.toFloat()
     }
 
     val viewportWidthPx = with(density) { editorSize.width.toPx() }
@@ -479,7 +478,7 @@ private fun buildEditorLayout(
                 text = piece.text,
                 charWidths = List(pieceScalarCount) { charWidthPx },
             )
-            drawLayouts += textMeasurer.measure(piece.text.toAnnotatedString(), textStyle)
+            drawLayouts += textMeasurer.measure(AnnotatedString(piece.text), textStyle)
             drawTops += contentHeightPx + index * lineHeightPx
         }
         contentHeightPx += wrapped.size * lineHeightPx
