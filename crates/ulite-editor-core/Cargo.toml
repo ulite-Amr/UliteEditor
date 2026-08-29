@@ -3,6 +3,7 @@ name = "ulite-editor-core"
 version = "0.1.0"
 edition = "2021"
 description = "Buffer, cursor, wrap, hit-test, scroll, and text-direction logic for UliteEditor. UI-free by design — the Compose layer owns rendering, animation, and text measurement."
+license = "GPL-3.0-or-later"
 
 [lib]
 crate-type = ["lib", "cdylib", "staticlib"]
