@@ -77,9 +77,10 @@ A task without a corresponding progress log entry is considered incomplete, even
 
 ## 7.5 CI, Merging, and `gh` Usage — STRICT
 
-- CI runs 3 required checks on every PR: `lint`, `test`, `check` (see
-  `.github/workflows/ci.yml`). `check` includes a debug-only build for
-  sanity — never a release build (consistent with §2).
+- CI runs the required checks defined in `.github/workflows/ci.yml` on every
+  PR. `check` is a debug-only build for sanity — never a release build
+  (consistent with §2); the crate itself denies `missing_docs` and broken
+  intra-doc links.
 - The agent may use `gh` freely for **read-only and PR-creation** actions:
   checking CI status (`scripts/ci-status.sh`), opening a PR
   (`scripts/open-pr.sh`), downloading CI artifacts

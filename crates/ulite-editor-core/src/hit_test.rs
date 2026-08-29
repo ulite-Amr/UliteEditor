@@ -1,3 +1,7 @@
+//! Pure tap/position geometry over the [`VisualLineSource`] measurement
+//! abstraction: where a tap lands ((row, column)) and where a cursor sits
+//! (content-space x/y). Owns neither the buffer nor text measurement.
+
 use crate::cursor::CursorPosition;
 
 /// Everything hit-testing needs to know about a row's already-wrapped

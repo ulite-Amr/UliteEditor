@@ -1,3 +1,6 @@
+//! Text mutation operations (insert character, newline, backspace) applied
+//! to a [`Buffer`] at a [`CursorPosition`] — the ported `InputProcessor`.
+
 use crate::buffer::Buffer;
 use crate::cursor::CursorPosition;
 
