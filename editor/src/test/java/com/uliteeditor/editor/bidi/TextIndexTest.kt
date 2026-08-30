@@ -16,7 +16,7 @@ class TextIndexTest {
     fun commonSuffixWalksCodePointsNotChars() {
         assertEquals(1, TextIndex.commonCodePointSuffix("ملف", "شرف", 0))
         assertEquals(1, TextIndex.commonCodePointSuffix("a😀", "b😀", 0))
-        assertEquals(4, TextIndex.commonCodePointSuffix("hello", "42hello", 0))
+        assertEquals(5, TextIndex.commonCodePointSuffix("hello", "42hello", 0))
         assertEquals(0, TextIndex.commonCodePointSuffix("abc", "abd", 2))
     }
 
@@ -43,7 +43,10 @@ class TextIndexTest {
         assertEquals(0 to 2, TextIndex.rowColAtByteOffset("ab\ncd", 2))
         assertEquals(1 to 1, TextIndex.rowColAtByteOffset("ab\ncd", 4))
         assertEquals(1 to 2, TextIndex.rowColAtByteOffset("ab\ncd", 5))
-        assertEquals(0 to 3, TextIndex.rowColAtByteOffset("مف\n", 4))
+        // Byte 4 is right after "مف" (2 bytes per letter) on row 0; byte 5 is
+        // the newline itself, which rolls over to row 1, column 0.
+        assertEquals(0 to 4, TextIndex.rowColAtByteOffset("مف\n", 4))
+        assertEquals(1 to 0, TextIndex.rowColAtByteOffset("مف\n", 5))
     }
 
     @Test
