@@ -596,12 +596,11 @@ fun EditorComponent(
                                     // the old engine's locate_tap also fell through
                                     // to the first visual line there.
                                     val row = layout.rowTops.indexOfLast { it <= contentY }.coerceAtLeast(0)
-                                    val hitTextRange = layout.rowLayouts[row].getOffsetForPosition(
+                                    val rowLayout = layout.rowLayouts[row]
+                                    val hitUtf16 = rowLayout.getOffsetForPosition(
                                         Offset(contentX - leftMarginPx, contentY - layout.rowTops[row]),
-                                    )
-                                    val rowText = layout.rowLayouts[row].layoutInput.text.text
-                                    val hitUtf16 = hitTextRange.start.coerceIn(0, rowText.length)
-                                    val hitColumn = utf8Length(rowText.substring(0, hitUtf16))
+                                    ).coerceIn(0, rowLayout.layoutInput.text.text.length)
+                                    val hitColumn = utf8Length(rowLayout.layoutInput.text.text.substring(0, hitUtf16))
                                     session.setCursor(CursorPosition(row.toULong(), hitColumn.toULong()))
                                     resetBlink()
                                 }
@@ -1012,13 +1011,13 @@ private fun buildEditorLayout(
         }
         rowLayouts += layout
         rowTops += contentHeightPx
-        contentHeightPx += layout.height.toFloat()
+        contentHeightPx += layout.size.height
         if (!wrapEnabled) {
             maxLineWidthPx = maxOf(maxLineWidthPx, layout.size.width.toFloat())
         }
     }
-    // Wrap locks horizontal scroll to the content width (like the old
-    // engine); no-wrap widens the canvas to the longest row instead.
+    // Wrap locks horizontal scroll to the wrap width; no-wrap widens the
+    // canvas to the longest row instead.
     val contentWidthPx = if (wrapEnabled) {
         leftMarginPx + rightPadPx + wrapWidthPx
     } else {
