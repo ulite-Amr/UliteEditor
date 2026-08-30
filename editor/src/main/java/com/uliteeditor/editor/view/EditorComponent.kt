@@ -65,6 +65,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uniffi.ulite_editor_core.CursorPosition
@@ -97,6 +98,9 @@ private const val CURSOR_WIDTH_DP = 2
 
 /** `CursorManager.blinkRunnable` re-posted a blink every 500 ms (PORTING_NOTES row 20). */
 private const val BLINK_PERIOD_MS = 500L
+
+/** `CursorManager.resetBlink` held the caret solid for 1000 ms after any edit/move. */
+private const val BLINK_RESET_MS = 1000L
 
 /** `CursorManager.moveTo` tweened the caret in 120 ms. */
 private const val CARET_MOVE_ANIMATION_MS = 120
@@ -157,6 +161,7 @@ fun EditorComponent(
     var contentTick by remember { mutableIntStateOf(0) }
     var scrollTick by remember { mutableIntStateOf(0) }
     var blinkVisible by remember { mutableStateOf(true) }
+    var blinkJob by remember { mutableStateOf<Job?>(null) }
     var editorSize by remember { mutableStateOf(IntSize.Zero) }
     var editing by remember { mutableStateOf(false) }
     var scaling by remember { mutableStateOf(false) }
@@ -164,6 +169,31 @@ fun EditorComponent(
 
     var imeField by remember { mutableStateOf(TextFieldValue(session.bufferText())) }
     val interactionScope = rememberCoroutineScope()
+
+    // Port of CursorManager.resetBlink: the caret stays solid while the user
+    // is editing or has just moved it, and only starts blinking after
+    // BLINK_RESET_MS of inactivity. Every applied edit (typing/deleting),
+    // every caret move via tap, and focus-in re-arms it; focus-out hides the
+    // caret instantly (same "visible && focused" gate as the old code).
+    // Declared before syncImeField because that path re-arms it too.
+    fun resetBlink() {
+        blinkJob?.cancel()
+        blinkJob = null
+        blinkVisible = true
+        blinkJob = interactionScope.launch {
+            delay(BLINK_RESET_MS)
+            while (true) {
+                delay(BLINK_PERIOD_MS)
+                blinkVisible = !blinkVisible
+            }
+        }
+    }
+
+    fun hideBlink() {
+        blinkJob?.cancel()
+        blinkJob = null
+        blinkVisible = false
+    }
 
     // The invisible pipe must not sit under whole-word composition: autocorrect
     // / suggestion IMEs hold a word in the composing span until a release, and
@@ -203,6 +233,7 @@ fun EditorComponent(
         // contentTick++ converges instead of looping.
         if (imeField.text != session.bufferText() && applyImeEdit(session, imeField.text)) {
             contentTick++
+            resetBlink()
         }
         val current = session.bufferText()
         val selection = TextRange(
@@ -216,13 +247,7 @@ fun EditorComponent(
 
     LaunchedEffect(session) {
         focusRequester.requestFocus()
-    }
-
-    LaunchedEffect(session) {
-        while (true) {
-            delay(BLINK_PERIOD_MS)
-            blinkVisible = !blinkVisible
-        }
+        resetBlink()
     }
 
     // Every engine edit re-syncs the invisible field to the authoritative
@@ -554,6 +579,7 @@ fun EditorComponent(
                                     leftMarginPx,
                                 )
                                 session.setCursor(CursorPosition(hit.row, hit.column))
+                                resetBlink()
                                 focusRequester.requestFocus()
                                 // Re-raise the keyboard after a back press hid it
                                 // (focus alone won't relaunch it), but only when
@@ -647,6 +673,7 @@ fun EditorComponent(
                         }
                         if (applyImeEdit(session, committedText)) {
                             contentTick++
+                            resetBlink()
                         }
                     },
                     modifier = Modifier
@@ -659,8 +686,12 @@ fun EditorComponent(
                                 // the word mid-typing. Land it in the engine first.
                                 if (applyImeEdit(session, imeField.text)) {
                                     contentTick++
+                                    resetBlink()
                                 }
                             }
+                            // CursorManager.setFocused: the caret hides the
+                            // instant focus leaves and settles solid on return.
+                            if (it.isFocused) resetBlink() else hideBlink()
                             editing = it.isFocused
                         },
                     textStyle = TextStyle(color = Color.Transparent, fontSize = 16.sp),
