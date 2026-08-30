@@ -17,14 +17,32 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        // Real release key, provisioned by the CI keystore-create job and
+        // passed via repository secrets (base64 in RELEASE_KEYSTORE_B64). The
+        // file only exists on the CI runner / in secret storage — never in
+        // the repo. Absent it (PRs from forks, local dev), release still
+        // builds, debug-signed, so key material never blocks a build.
+        val releaseKeyPath = System.getenv("RELEASE_KEYSTORE_PATH")
+        if (!releaseKeyPath.isNullOrEmpty() && File(releaseKeyPath).isFile) {
+            create("release") {
+                storeFile = File(releaseKeyPath)
+                storePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD").orEmpty()
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS").orEmpty()
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD").orEmpty()
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // Testing-speed release: R8 on, signed with the debug key so
-            // nobody on the device side needs a keystore, and never published
-            // to any store. The "-test" suffix separates these builds from a
-            // future publishable release.
+            // Testing-speed release: R8 on, real signing when the CI secret
+            // keystore is present, otherwise the debug key so PRs and local
+            // runs never need key material, and never published to any store.
+            // The "-test" suffix separates these builds from a future
+            // publishable release.
             isMinifyEnabled = true
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             versionNameSuffix = "-test"
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

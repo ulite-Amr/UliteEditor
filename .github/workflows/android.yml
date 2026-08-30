@@ -16,8 +16,41 @@ on:
       - '.editorconfig'
       - '.github/workflows/android.yml'
   pull_request:
+  workflow_dispatch:
 
 jobs:
+  # One-time manual job: creates the release signing keystore on a CI runner
+  # (the only machine with a JDK here) and hands it back as artifacts. It runs
+  # ONLY on manual dispatch from main and never on normal builds. Nothing is
+  # echoed to the log — the operator downloads the artifacts, loads the key
+  # into repository secrets, then deletes the run so no trace stays in CI.
+  keystore-create:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Generate release keystore
+        run: |
+          set -euo pipefail
+          STORE_PW="$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)"
+          keytool -genkeypair -keystore release-key.jks \
+            -storepass "$STORE_PW" -keypass "$STORE_PW" \
+            -alias uliteeditor -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=UliteEditor, OU=Editor, O=UliteEditor, C=EG"
+          printf 'KSTORE_ALIAS=uliteeditor\nKSTORE_STORE_PASSWORD=%s\nKSTORE_KEY_PASSWORD=%s\n' \
+            "$STORE_PW" "$STORE_PW" > release-key-secrets.txt
+      - name: Upload keystore
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-keystore
+          path: release-key.jks
+          retention-days: 1
+      - name: Upload secrets file
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-keystore-secrets
+          path: release-key-secrets.txt
+          retention-days: 1
+
   build:
     runs-on: ubuntu-latest
     permissions:
@@ -45,8 +78,34 @@ jobs:
 
       - name: Format check
         run: gradle ktlintCheck --no-daemon
+
+      - name: Restore release signing keystore
+        id: keystore
+        env:
+          RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+        run: |
+          if [[ -n "${RELEASE_KEYSTORE_B64:-}" ]]; then
+            printf '%s' "$RELEASE_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release-key.jks"
+            echo "restored=true" >> "$GITHUB_OUTPUT"
+          else
+            # No secrets here (e.g. a PR from a fork): release falls back to
+            # debug signing so builds never block on key material.
+            echo "restored=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Unit tests + lint + assemble
         run: gradle :editor:testDebugUnitTest :app:lintDebug :editor:lintDebug :app:assembleDebug :app:assembleRelease --no-daemon
+        env:
+          RELEASE_KEYSTORE_PATH: ${{ runner.temp }}/release-key.jks
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+
+      - name: Verify release signature
+        if: steps.keystore.outputs.restored == 'true'
+        run: |
+          apksigner="$(echo "$ANDROID_HOME"/build-tools/*/apksigner | tr ' ' '\n' | sort -V | tail -1)"
+          "$apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
