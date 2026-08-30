@@ -27,10 +27,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.uliteeditor.editor.metrics.EditorMetrics
+import com.uliteeditor.editor.settings.EditorSettings
 import com.uliteeditor.editor.theme.UliteEditorTheme
 import com.uliteeditor.editor.view.EditorComponent
-import com.uliteeditor.editor.view.EditorMetrics
-import com.uliteeditor.editor.view.EditorSettings
 
 class MainActivity : ComponentActivity() {
 
