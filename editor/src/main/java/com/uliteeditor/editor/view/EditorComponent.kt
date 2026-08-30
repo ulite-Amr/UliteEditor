@@ -490,16 +490,24 @@ fun EditorComponent(
             BasicTextField(
                 value = imeField,
                 onValueChange = { newValue ->
-                    if (newValue.composition != null) {
-                        // Mid-compose: mirror the IME's text in the field but
-                        // keep it out of the engine buffer; the engine sees a
-                        // single edit when the IME commits (composition == null).
-                        imeField = newValue
+                    // Mirror the IME's authoritative view (text + composing
+                    // range) exactly — writing composition = null here would
+                    // force-commit the active composition and reset the
+                    // keyboard (suggestion strip / layout). Real-time typing
+                    // then comes from committing only what the IME released.
+                    imeField = newValue
+                    val composed = newValue.composition
+                    val committedText = if (composed != null) {
+                        // The engine sees everything outside the live composing
+                        // span, so each new keystroke lands immediately; the
+                        // composed segment commits as one edit the moment the
+                        // IME releases it (composition == null).
+                        newValue.text.removeRange(composed.min until composed.max)
                     } else {
-                        if (applyImeEdit(session, newValue.text)) {
-                            contentTick++
-                        }
-                        syncImeField()
+                        newValue.text
+                    }
+                    if (applyImeEdit(session, committedText)) {
+                        contentTick++
                     }
                 },
                 modifier = Modifier
