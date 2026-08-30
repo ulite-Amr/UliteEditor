@@ -1,5 +1,8 @@
 package com.uliteeditor.editor.view
 
+import android.text.InputType
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.animation.core.animateFloatAsState
@@ -27,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -38,10 +42,13 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.InterceptPlatformTextInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.PlatformTextInputInterceptor
+import androidx.compose.ui.platform.PlatformTextInputMethodRequest
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
@@ -50,6 +57,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardOptions
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
@@ -134,6 +142,7 @@ private const val MAX_FONT_SIZE_SP = 26f
  *   (the real InputConnection-backed editor is a follow-up, see PROGRESS).
  */
 @Composable
+@OptIn(ExperimentalComposeUiApi::class)
 fun EditorComponent(
     modifier: Modifier = Modifier,
     onMetricsChange: ((EditorMetrics) -> Unit)? = null,
@@ -155,6 +164,27 @@ fun EditorComponent(
 
     var imeField by remember { mutableStateOf(TextFieldValue(session.bufferText())) }
     val interactionScope = rememberCoroutineScope()
+
+    // The invisible pipe must not sit under whole-word composition: autocorrect
+    // / suggestion IMEs hold a word in the composing span until a release, and
+    // the engine only sees committed text. Ask for a no-suggestions plain-text
+    // input by tagging the EditorInfo with TYPE_TEXT_FLAG_NO_SUGGESTIONS —
+    // KeyboardOptions.autoCorrect is ignored by most IMEs for KeyboardType.Text.
+    // The interceptor must be remember-stable: passing a fresh instance while a
+    // session is live tears it down and restarts the keyboard every recomposition.
+    val noSuggestionsInterceptor = remember {
+        PlatformTextInputInterceptor { request, nextHandler ->
+            val modifiedRequest = object : PlatformTextInputMethodRequest {
+                override fun createInputConnection(outAttributes: EditorInfo): InputConnection {
+                    val connection = request.createInputConnection(outAttributes)
+                    outAttributes.inputType =
+                        outAttributes.inputType or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                    return connection
+                }
+            }
+            nextHandler.startInputMethod(modifiedRequest)
+        }
+    }
 
     fun syncImeField() {
         // While the IME is composing (suggestions / autocorrect / multi-tap),
@@ -580,52 +610,59 @@ fun EditorComponent(
 
         // Invisible IME pipe: one 1 dp field whose text is always snap-synced
         // to the engine buffer (invariant 3). Programmatic writes do not fire
-        // onValueChange, so there are no feedback loops.
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .size(1.dp),
+        // onValueChange, so there are no feedback loops. The input session of
+        // every field below passes through the no-suggestions interceptor (see
+        // `noSuggestionsInterceptor`), so the IME tags its own EditorInfo.
+        InterceptPlatformTextInput(
+            interceptor = noSuggestionsInterceptor,
         ) {
-            BasicTextField(
-                value = imeField,
-                onValueChange = { newValue ->
-                    // Mirror the IME's authoritative view (text + composing
-                    // range) exactly — writing composition = null here would
-                    // force-commit the active composition and reset the
-                    // keyboard (suggestion strip / layout). Real-time typing
-                    // then comes from committing only what the IME released.
-                    imeField = newValue
-                    val composed = newValue.composition
-                    val committedText = if (composed != null) {
-                        // The engine sees everything outside the live composing
-                        // span, so each new keystroke lands immediately; the
-                        // composed segment commits as one edit the moment the
-                        // IME releases it (composition == null).
-                        newValue.text.removeRange(composed.min until composed.max)
-                    } else {
-                        newValue.text
-                    }
-                    if (applyImeEdit(session, committedText)) {
-                        contentTick++
-                    }
-                },
+            Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .focusRequester(focusRequester)
-                    .onFocusChanged {
-                        if (!it.isFocused && imeField.composition != null) {
-                            // Clearing focus makes the platform cancel the
-                            // active composition, which would silently drop
-                            // the word mid-typing. Land it in the engine first.
-                            if (applyImeEdit(session, imeField.text)) {
-                                contentTick++
-                            }
+                    .align(Alignment.TopStart)
+                    .size(1.dp),
+            ) {
+                BasicTextField(
+                    value = imeField,
+                    onValueChange = { newValue ->
+                        // Mirror the IME's authoritative view (text + composing
+                        // range) exactly — writing composition = null here would
+                        // force-commit the active composition and reset the
+                        // keyboard (suggestion strip / layout). Real-time typing
+                        // then comes from committing only what the IME released.
+                        imeField = newValue
+                        val composed = newValue.composition
+                        val committedText = if (composed != null) {
+                            // The engine sees everything outside the live composing
+                            // span, so each new keystroke lands immediately; the
+                            // composed segment commits as one edit the moment the
+                            // IME releases it (composition == null).
+                            newValue.text.removeRange(composed.min until composed.max)
+                        } else {
+                            newValue.text
                         }
-                        editing = it.isFocused
+                        if (applyImeEdit(session, committedText)) {
+                            contentTick++
+                        }
                     },
-                textStyle = TextStyle(color = Color.Transparent, fontSize = 16.sp),
-                cursorBrush = SolidColor(Color.Transparent),
-            )
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .focusRequester(focusRequester)
+                        .onFocusChanged {
+                            if (!it.isFocused && imeField.composition != null) {
+                                // Clearing focus makes the platform cancel the
+                                // active composition, which would silently drop
+                                // the word mid-typing. Land it in the engine first.
+                                if (applyImeEdit(session, imeField.text)) {
+                                    contentTick++
+                                }
+                            }
+                            editing = it.isFocused
+                        },
+                    textStyle = TextStyle(color = Color.Transparent, fontSize = 16.sp),
+                    cursorBrush = SolidColor(Color.Transparent),
+                    keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
+                )
+            }
         }
         }
     }
