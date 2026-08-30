@@ -53,6 +53,7 @@ import androidx.compose.ui.text.style.TextMotion
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.uliteeditor.editor.EditorDimensions
 import com.uliteeditor.editor.bidi.TextIndex
 import com.uliteeditor.editor.effects.runFlingLoop
 import com.uliteeditor.editor.effects.runMetricsLoop
@@ -71,7 +72,6 @@ import com.uliteeditor.editor.metrics.EditorMetrics
 import com.uliteeditor.editor.render.EditorDrawState
 import com.uliteeditor.editor.render.drawEditorContent
 import com.uliteeditor.editor.settings.EditorSettings
-import com.uliteeditor.editor.EditorDimensions
 import kotlinx.coroutines.launch
 import uniffi.ulite_editor_core.CursorPosition
 import uniffi.ulite_editor_core.EditorSession
@@ -395,7 +395,6 @@ fun EditorComponent(
                         caretRowFirstTop = caretRowFirstTop,
                         contentColor = contentColor,
                         caretColor = caretColor,
-                        composingColor = composingColor,
                         blinkVisible = blink.visible,
                         caretX = composingCaretOffset?.x ?: animatedCaretX,
                         caretY = composingCaretOffset?.y ?: steadyCaret.y,

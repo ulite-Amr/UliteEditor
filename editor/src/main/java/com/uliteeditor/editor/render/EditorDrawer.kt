@@ -22,7 +22,6 @@ internal data class EditorDrawState(
     val caretRowFirstTop: Float,
     val contentColor: Color,
     val caretColor: Color,
-    val composingColor: Color,
     val blinkVisible: Boolean,
     val caretX: Float,
     val caretY: Float,
@@ -47,7 +46,9 @@ internal fun DrawScope.drawEditorContent(state: EditorDrawState) {
         if (rowTops.isNotEmpty()) {
             val viewTop = state.scrollOffset.y
             val viewBottom = state.scrollOffset.y + size.height
-            // First row whose bottom edge lies at or below the viewport top.
+            // First row whose bottom edge lies strictly below the viewport top
+            // (a row that ends exactly at the top edge has zero overlap and is
+            // skipped the same way the canvas clip would hide it).
             var low = 0
             var high = rowTops.size
             while (low < high) {

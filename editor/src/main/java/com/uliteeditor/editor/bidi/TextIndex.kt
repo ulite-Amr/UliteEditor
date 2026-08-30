@@ -116,5 +116,6 @@ internal object TextIndex {
         else -> 4
     }
 
+    /** Byte length of [s] in UTF-8 — the engine buffer is UTF-8. */
     fun utf8Length(s: String): Int = s.toByteArray(Charsets.UTF_8).size
 }

@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 internal class CaretBlink(
     private val scope: CoroutineScope,
 ) {
+    /** Whether the caret is currently painted; drives the canvas redraw. */
     var visible by mutableStateOf(true)
         private set
 
