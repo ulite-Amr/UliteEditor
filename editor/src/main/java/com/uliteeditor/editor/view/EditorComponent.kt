@@ -155,6 +155,15 @@ fun EditorComponent(
         // where composition is null; the IME's composing text then lands as a
         // single edit in the engine).
         if (imeField.composition != null) return
+        // The field can briefly hold text that never reached the engine (a
+        // composing span the IME ended without a commit callback, or a race
+        // between the final onValueChange and focus loss). Landing it before
+        // overwriting makes text-loss impossible on every sync path; once
+        // flushed, field and buffer are equal and this no-ops, so the extra
+        // contentTick++ converges instead of looping.
+        if (imeField.text != session.bufferText() && applyImeEdit(session, imeField.text)) {
+            contentTick++
+        }
         val current = session.bufferText()
         val selection = TextRange(
             utf16IndexAtByteOffset(current, absoluteByteOffsetOfCursor(session)),
@@ -513,7 +522,17 @@ fun EditorComponent(
                 modifier = Modifier
                     .fillMaxSize()
                     .focusRequester(focusRequester)
-                    .onFocusChanged { editing = it.isFocused },
+                    .onFocusChanged {
+                        if (!it.isFocused && imeField.composition != null) {
+                            // Clearing focus makes the platform cancel the
+                            // active composition, which would silently drop
+                            // the word mid-typing. Land it in the engine first.
+                            if (applyImeEdit(session, imeField.text)) {
+                                contentTick++
+                            }
+                        }
+                        editing = it.isFocused
+                    },
                 textStyle = TextStyle(color = Color.Transparent, fontSize = 16.sp),
                 cursorBrush = SolidColor(Color.Transparent),
             )
@@ -525,8 +544,8 @@ fun EditorComponent(
         if (editing) {
             // First back: drop the keyboard and the field's focus; the next
             // back falls through to the host's default (exit).
-            focusManager.clearFocus()
             keyboardController?.hide()
+            focusManager.clearFocus()
         } else {
             backDispatcher?.onBackPressed()
         }
