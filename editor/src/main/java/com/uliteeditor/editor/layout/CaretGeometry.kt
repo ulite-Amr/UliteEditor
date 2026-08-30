@@ -1,6 +1,7 @@
 package com.uliteeditor.editor.layout
 
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.style.ResolvedTextDirection
 import com.uliteeditor.editor.bidi.TextIndex
 import uniffi.ulite_editor_core.CursorPosition
 
@@ -10,12 +11,20 @@ internal data class CaretSpot(val x: Float, val y: Float)
 /**
  * X, in content space, of the caret at UTF-16 [utf16] inside [layout].
  * `getCursorRect` is bidi-aware and valid at offset == end-of-line (unlike
- * getBoundingBox), returning the caret spot inside this exact row layout —
- * which is also the one we draw.
+ * getBoundingBox). For a *resolved RTL paragraph* its coordinates are measured
+ * from the line's right edge, so the x must be mirrored exactly the way the
+ * platform's own field does it (`layoutWidth - caretRect.right`, cf. androidx
+ * `TextFieldCoreModifier.getCursorRectInScroller`) — without the mirror, an
+ * Arabic line (paragraph direction RTL because it starts with a strong RTL
+ * letter, regardless of the device language) leaves the caret back on the
+ * English/left side. LTR paragraphs keep the plain left edge.
  */
 internal fun caretXIn(layout: TextLayoutResult, utf16: Int, leftMarginPx: Float): Float {
     val caretRect = layout.getCursorRect(utf16)
-    return leftMarginPx + caretRect.left
+    return when (layout.getParagraphDirection(utf16)) {
+        ResolvedTextDirection.Rtl -> layout.size.width - caretRect.right + leftMarginPx
+        ResolvedTextDirection.Ltr -> leftMarginPx + caretRect.left
+    }
 }
 
 /** Y offset of the caret inside [layout] at UTF-16 [utf16], relative to the row's own top. */
