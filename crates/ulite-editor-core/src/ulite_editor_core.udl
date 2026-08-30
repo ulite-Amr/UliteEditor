@@ -6,51 +6,18 @@
 // - Byte offsets travel as `u64` (`f32` only for pixel geometry): the
 //   engine stays `usize`/byte-indexed, and the bridge widens at the edge,
 //   exactly the adjustment made for the own-`CursorPosition` name clash.
-// - Geometry functions take the caller's measured visual lines rather than
-//   measuring text itself — this crate never measures (same split as the
-//   internal API).
+// - No glyph-space geometry crosses this boundary: text is measured and
+//   laid out by the Compose renderer (real glyph widths, bidi, shaping),
+//   whose results only it can produce. The engine owns the
+//   direction-agnostic byte math — buffer, cursor, edits, and the scroll
+//   camera.
 
 namespace ulite_editor_core {
-  boolean is_rtl(string text);
-  CursorPosition locate_tap(
-    sequence<VisualLine> visual_lines,
-    u64 row_count,
-    f32 adjusted_x,
-    f32 adjusted_y,
-    f32 line_height,
-    f32 top_margin,
-    f32 left_margin
-  );
-  Point cursor_screen_position(
-    sequence<VisualLine> visual_lines,
-    CursorPosition cursor,
-    f32 line_height,
-    f32 top_margin,
-    f32 left_margin
-  );
 };
 
 dictionary CursorPosition {
   u64 row;
   u64 column;
-};
-
-dictionary Point {
-  f32 x;
-  f32 y;
-};
-
-dictionary VisualLine {
-  u64 row;
-  u64 byte_start;
-  string text;
-  sequence<f32> char_widths;
-};
-
-dictionary WrappedLine {
-  u64 byte_start;
-  u64 byte_end;
-  string text;
 };
 
 interface EditorSession {
@@ -66,16 +33,6 @@ interface EditorSession {
   u64 row_count();
   string line_text(u64 row);
   string buffer_text();
-
-  void set_metrics_version(u64 version);
-  u64 metrics_version();
-
-  sequence<WrappedLine> wrapped_lines(
-    u64 row,
-    sequence<f32> char_widths,
-    u32 viewport_width,
-    boolean wrap_enabled
-  );
 
   f32 scroll_x();
   f32 scroll_y();

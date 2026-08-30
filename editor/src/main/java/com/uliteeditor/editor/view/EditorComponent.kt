@@ -70,9 +70,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import uniffi.ulite_editor_core.CursorPosition
 import uniffi.ulite_editor_core.EditorSession
-import uniffi.ulite_editor_core.VisualLine
-import uniffi.ulite_editor_core.cursorScreenPosition
-import uniffi.ulite_editor_core.locateTap
 
 /**
  * Live editor state a host can render into its own UI (an info bar in the
@@ -122,11 +119,24 @@ private const val MIN_FONT_SIZE_SP = 8f
 private const val MAX_FONT_SIZE_SP = 26f
 
 /**
+ * Editor preferences apps can tune and hand to [EditorComponent]. The
+ * component reads them live (composition-observed), so mutating a property
+ * re-renders immediately — the host never rebuilds state lists the editor
+ * owns; it just flips switches.
+ */
+class EditorSettings {
+    /** When true, soft-wraps long rows at the component's width. */
+    var wordWrapEnabled by mutableStateOf(true)
+}
+
+/**
  * The reusable editor composable: it owns a live [EditorSession] behind the
- * UniFFI bridge and renders it like a word processor — wrapping is decided
- * in Rust from measured character widths, taps are hit-tested by
- * `locateTap`, the caret is placed by `cursorScreenPosition`, and the
- * camera follows via `ensureVisible`.
+ * UniFFI bridge and renders it like a word processor, with Compose doing
+ * the glyph-space geometry. Every row is measured once per rebuild by
+ * [textMeasurer] with the engine's authoritative text; the caret, wrap,
+ * and tap hit-testing all read that *same* layout, so what you see is
+ * exactly what you touch — bidi, shaping, and real glyph widths included
+ * (Rust owns the buffer, cursor, edits, and scroll camera).
  *
  * This is a library component, not a screen: it takes a plain [modifier]
  * so any host (activity, split pane, preview) can embed it. Input comes
@@ -134,24 +144,29 @@ private const val MAX_FONT_SIZE_SP = 26f
  * the engine buffer — there is no built-in on-screen keyboard.
  *
  * Three invariants hold the component together:
- * - The caret is always *derived* from the same laid-out [visualLines]
- *   version that the text is drawn from (keyed `remember`), never computed
- *   from a stale layout inside an input handler — otherwise edits that
- *   reflow (especially wrap) leave the caret a row away from where text is
- *   inserted.
+ * - The caret is always *derived* from the same laid-out row layouts
+ *   ([RebuiltEditorLayout]) that the text is drawn from (keyed `remember`),
+ *   never computed from a stale layout inside an input handler — otherwise
+ *   edits that reflow (especially wrap) leave the caret a row away from
+ *   where text is inserted.
  * - Scroll input follows the finger: drag/fling deltas are negated before
  *   reaching the core camera, matching Android/sora-editor conventions.
  * - The engine buffer is the single source of truth; the IME field is just
  *   a pipe that gets a fresh authoritative TextFieldValue every edit
  *   (the real InputConnection-backed editor is a follow-up, see PROGRESS).
+ *
+ * [settings] is the host's view of editor preferences; pass an owned
+ * instance to keep the toggles (word wrap) shared with the app's UI.
  */
 @Composable
 @OptIn(ExperimentalComposeUiApi::class)
 fun EditorComponent(
     modifier: Modifier = Modifier,
+    settings: EditorSettings? = null,
     onMetricsChange: ((EditorMetrics) -> Unit)? = null,
 ) {
     val session = remember { EditorSession() }
+    val editorSettings = settings ?: remember { EditorSettings() }
     val textMeasurer = rememberTextMeasurer()
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -280,40 +295,30 @@ fun EditorComponent(
     val leftMarginPx = with(density) { LEFT_MARGIN_DP.dp.toPx() }
     val rightPadPx = with(density) { RIGHT_PAD_DP.dp.toPx() }
     val cursorWidthPx = with(density) { CURSOR_WIDTH_DP.dp.toPx() }
-    val charWidthPx = with(density) {
-        textMeasurer.measure(AnnotatedString("M"), textStyle).size.width.toFloat()
-    }
-
     val viewportWidthPx = (editorSize.width.toFloat()).coerceAtLeast(0f)
     val viewportHeightPx = (editorSize.height.toFloat()).coerceAtLeast(0f)
     val wrapWidthPx = (viewportWidthPx - leftMarginPx - rightPadPx).coerceAtLeast(0f)
+    val wrapEnabled = editorSettings.wordWrapEnabled
 
-    val rebuilt = remember(session, textMeasurer, textStyle, charWidthPx, contentTick, wrapWidthPx) {
+    val rebuilt = remember(session, textMeasurer, textStyle, contentTick, wrapWidthPx, wrapEnabled) {
         buildEditorLayout(
             session = session,
             textMeasurer = textMeasurer,
             textStyle = textStyle,
-            charWidthPx = charWidthPx,
-            lineHeightPx = lineHeightPx,
             topMarginPx = topMarginPx,
             leftMarginPx = leftMarginPx,
             rightPadPx = rightPadPx,
             wrapWidthPx = wrapWidthPx,
+            wrapEnabled = wrapEnabled,
         )
     }
-    val visualLines = rebuilt.visualLines
 
     // Keep the gesture loop alive across layout rebuilds: a pointerInput
-    // keyed on visualLines would cancel mid-pinch every time the zoom
-    // re-measures the layout. The handler reads the *latest* lines through
-    // this state instead.
-    val visualLinesState = remember { mutableStateOf(emptyList<VisualLine>()) }
-    visualLinesState.value = visualLines
-
-    // Same "live, not captured" treatment for the pixel metrics the gesture
-    // loop reads (line height grows with the font during a pinch).
-    val lineHeightPxState = remember { mutableStateOf(lineHeightPx) }
-    lineHeightPxState.value = lineHeightPx
+    // keyed on the layout would cancel mid-pinch every time the zoom
+    // re-measures it. The handler reads the *latest* rebuilt layout
+    // through this state instead.
+    val geometryState = remember { mutableStateOf<RebuiltEditorLayout?>(null) }
+    geometryState.value = rebuilt
 
     LaunchedEffect(rebuilt.contentWidthPx, rebuilt.contentHeightPx, wrapWidthPx, viewportHeightPx) {
         session.updateBounds(
@@ -345,15 +350,15 @@ fun EditorComponent(
     LaunchedEffect(cursor) {
         syncImeField()
     }
-    val caretContent = remember(rebuilt, cursor, lineHeightPx, topMarginPx, leftMarginPx) {
-        val point = cursorScreenPosition(
-            rebuilt.visualLines,
-            cursor,
-            lineHeightPx,
-            topMarginPx,
-            leftMarginPx,
-        )
-        Offset(point.x, point.y)
+    val caretContent = remember(rebuilt, cursor, leftMarginPx) {
+        val row = cursor.row.toInt().coerceIn(0, rebuilt.rowLayouts.lastIndex)
+        val layout = rebuilt.rowLayouts[row]
+        val utf16 = utf16IndexAtByteOffset(layout.layoutInput.text.text, cursor.column.toLong())
+        // getCursorRect is bidi-aware and valid at offset == end-of-line
+        // (unlike getBoundingBox), returning the caret spot inside this
+        // exact row layout — which is also the one we draw.
+        val caretRect = layout.getCursorRect(utf16)
+        Offset(leftMarginPx + caretRect.left, rebuilt.rowTops[row] + caretRect.top)
     }
 
     // While the IME holds text in composition (autocorrect / suggestions /
@@ -382,13 +387,13 @@ fun EditorComponent(
         session.lineText(caretRow.toULong()),
         session.cursor().column.toLong(),
     )
-    val caretRowFirstTop = rebuilt.visualLines.indexOfFirst { it.row.toInt() == caretRow }
-        .let { if (it in rebuilt.drawTops.indices) rebuilt.drawTops[it] else caretContent.y }
+    val caretRowFirstTop = rebuilt.rowTops.getOrNull(caretRow) ?: caretContent.y
     val composingLayout = remember(
         composingText,
         composingColor,
         textStyle,
         wrapWidthPx,
+        wrapEnabled,
         caretRow,
         caretUtf16,
         contentTick,
@@ -406,21 +411,32 @@ fun EditorComponent(
                 )
                 append(row.substring(caretUtf16))
             }
-            textMeasurer.measure(
-                merged,
-                textStyle,
-                softWrap = true,
-                maxLines = Int.MAX_VALUE,
-                overflow = TextOverflow.Clip,
-                constraints = Constraints(maxWidth = wrapWidthPx.toInt().coerceAtLeast(1)),
-            )
+            if (wrapEnabled) {
+                textMeasurer.measure(
+                    merged,
+                    textStyle,
+                    softWrap = true,
+                    maxLines = Int.MAX_VALUE,
+                    overflow = TextOverflow.Clip,
+                    constraints = Constraints(maxWidth = wrapWidthPx.toInt().coerceAtLeast(1)),
+                )
+            } else {
+                textMeasurer.measure(
+                    merged,
+                    textStyle,
+                    softWrap = false,
+                    maxLines = Int.MAX_VALUE,
+                    overflow = TextOverflow.Clip,
+                )
+            }
         }
     }
     val composingCaretContent = if (composingLayout != null && composingText != null) {
-        val box = composingLayout.getBoundingBox(
-            (caretUtf16 + composingText.length).coerceIn(0, composingLayout.layoutInput.text.length),
+        val caretRect = composingLayout.getCursorRect(
+            (caretUtf16 + composingText.length)
+                .coerceIn(0, composingLayout.layoutInput.text.text.length),
         )
-        Offset(leftMarginPx + box.left, caretRowFirstTop + box.top)
+        Offset(leftMarginPx + caretRect.left, caretRowFirstTop + caretRect.top)
     } else {
         null
     }
@@ -475,7 +491,6 @@ fun EditorComponent(
                         if (active.isNotEmpty()) {
                             event.changes.forEach { it.consume() }
                         }
-                        val lines = visualLinesState.value
                         if (active.size >= 2 && !scaling) {
                             // A second finger starts the pinch: cancel any
                             // fling/pan and lock the initial span reference.
@@ -569,17 +584,25 @@ fun EditorComponent(
                                 val velocity = velocityTracker.calculateVelocity()
                                 session.startFling(-velocity.x, -velocity.y)
                             } else if (!movedBeyondSlop && gestureStart != null && !suppressTap) {
-                                val hit = locateTap(
-                                    lines,
-                                    session.rowCount(),
-                                    released.position.x + session.scrollX(),
-                                    released.position.y + session.scrollY(),
-                                    lineHeightPxState.value,
-                                    topMarginPx,
-                                    leftMarginPx,
-                                )
-                                session.setCursor(CursorPosition(hit.row, hit.column))
-                                resetBlink()
+                                // Hit-test against the exact layout that is on
+                                // screen: getOffsetForPosition is bidi-aware and
+                                // maps a tap to the nearest UTF-16 offset, which
+                                // we convert back to the engine's byte column.
+                                val layout = geometryState.value
+                                if (layout != null) {
+                                    val contentX = released.position.x + session.scrollX()
+                                    val contentY = released.position.y + session.scrollY()
+                                    val rowIndex = layout.rowTops.indexOfLast { it <= contentY }
+                                    val row = if (rowIndex in layout.rowLayouts.indices) rowIndex else layout.rowLayouts.lastIndex
+                                    val hitTextRange = layout.rowLayouts[row].getOffsetForPosition(
+                                        Offset(contentX - leftMarginPx, contentY - layout.rowTops[row]),
+                                    )
+                                    val rowText = layout.rowLayouts[row].layoutInput.text.text
+                                    val hitUtf16 = hitTextRange.start.coerceIn(0, rowText.length)
+                                    val hitColumn = utf8Length(rowText.substring(0, hitUtf16))
+                                    session.setCursor(CursorPosition(row.toULong(), hitColumn.toULong()))
+                                    resetBlink()
+                                }
                                 focusRequester.requestFocus()
                                 // Re-raise the keyboard after a back press hid it
                                 // (focus alone won't relaunch it), but only when
@@ -607,17 +630,17 @@ fun EditorComponent(
     ) {
         Canvas(Modifier.fillMaxSize()) {
             translate(left = -scrollOffset.x, top = -scrollOffset.y) {
-                for (index in rebuilt.drawLayouts.indices) {
+                for (row in rebuilt.rowLayouts.indices) {
                     // While composing, the caret's row is redrawn from the
                     // merged layout below; skip its engine pieces so the
                     // inserted composing text is not double-rendered.
-                    if (composingLayout != null && rebuilt.visualLines[index].row.toInt() == caretRow) {
+                    if (composingLayout != null && row == caretRow) {
                         continue
                     }
                     drawText(
-                        textLayoutResult = rebuilt.drawLayouts[index],
+                        textLayoutResult = rebuilt.rowLayouts[row],
                         color = contentColor,
-                        topLeft = Offset(leftMarginPx, rebuilt.drawTops[index]),
+                        topLeft = Offset(leftMarginPx, rebuilt.rowTops[row]),
                     )
                 }
                 composingLayout?.let { layout ->
@@ -928,78 +951,80 @@ private fun utf8LengthOfCodePoint(codePoint: Int): Int = when {
 private fun utf8Length(s: String): Int = s.toByteArray(Charsets.UTF_8).size
 
 private data class RebuiltEditorLayout(
-    val visualLines: List<VisualLine>,
-    val drawLayouts: List<TextLayoutResult>,
-    val drawTops: List<Float>,
+    val rowLayouts: List<TextLayoutResult>,
+    val rowTops: List<Float>,
     val contentWidthPx: Float,
     val contentHeightPx: Float,
 )
 
 /**
- * Measures every logical row once and uses the engine's wrap to produce the
- * visual lines the editor draws and hit-tests against: Rust decides the
- * break points, Compose supplies the per-scalar widths and the text layout
- * (PORTING_NOTES rows 16-18 split). Each [VisualLine] mirrors one wrapped
- * segment (byte range + per-scalar widths), matching what
- * `locateTap`/`cursorScreenPosition` expect.
+ * Measures the whole document once per rebuild and hands the editor it
+ * draws from — one `TextLayoutResult` per logical row, laid out by real
+ * glyph measurement (bidi, shaping, actual advances). This is the single
+ * source of truth the caret, wrap, and tap hit-testing all read (mnemonic:
+ * what Compose draws is what Compose hit-tests), replacing the old
+ * two-model design where Rust broke lines from a uniform per-character
+ * width guess (`charWidthPx` = one "M") — the cause of the mid-screen
+ * wrap folds and the LTR-only caret.
+ *
+ * Row tops are the text-y of each row's layout in content space, so the
+ * caret/gesture layers only ever add this layout's own offsets — never
+ * recompute width math. Requests only change what this function re-runs:
+ * an edit, a resize, a font change, or a settings toggle.
  */
 private fun buildEditorLayout(
     session: EditorSession,
     textMeasurer: TextMeasurer,
     textStyle: TextStyle,
-    charWidthPx: Float,
-    lineHeightPx: Float,
     topMarginPx: Float,
     leftMarginPx: Float,
     rightPadPx: Float,
     wrapWidthPx: Float,
+    wrapEnabled: Boolean,
 ): RebuiltEditorLayout {
     val rowCount = session.rowCount().toInt()
-    val visualLines = mutableListOf<VisualLine>()
-    val drawLayouts = mutableListOf<TextLayoutResult>()
-    val drawTops = mutableListOf<Float>()
+    val rowLayouts = mutableListOf<TextLayoutResult>()
+    val rowTops = mutableListOf<Float>()
     var contentHeightPx = topMarginPx
+    var maxLineWidthPx = 0f
+    val wrapConstraints = Constraints(maxWidth = wrapWidthPx.toInt().coerceAtLeast(1))
     for (row in 0 until rowCount) {
         val text = session.lineText(row.toULong())
-        val scalarCount = Character.codePointCount(text, 0, text.length)
-        val rowWidths = List(scalarCount) { charWidthPx }
-        val wrapped = session.wrappedLines(
-            row.toULong(),
-            rowWidths,
-            wrapWidthPx.toUInt(),
-            true,
-        )
-        for (index in wrapped.indices) {
-            val piece = wrapped[index]
-            val pieceScalarCount = Character.codePointCount(piece.text, 0, piece.text.length)
-            visualLines += VisualLine(
-                row = row.toULong(),
-                byteStart = piece.byteStart,
-                text = piece.text,
-                charWidths = List(pieceScalarCount) { charWidthPx },
+        val layout = if (wrapEnabled) {
+            textMeasurer.measure(
+                AnnotatedString(text),
+                textStyle,
+                softWrap = true,
+                maxLines = Int.MAX_VALUE,
+                overflow = TextOverflow.Clip,
+                constraints = wrapConstraints,
             )
-            drawLayouts += textMeasurer.measure(AnnotatedString(piece.text), textStyle)
-            drawTops += contentHeightPx + index * lineHeightPx
+        } else {
+            textMeasurer.measure(
+                AnnotatedString(text),
+                textStyle,
+                softWrap = false,
+                maxLines = Int.MAX_VALUE,
+                overflow = TextOverflow.Clip,
+            )
         }
-        contentHeightPx += wrapped.size * lineHeightPx
+        rowLayouts += layout
+        rowTops += contentHeightPx
+        contentHeightPx += layout.height.toFloat()
+        if (!wrapEnabled) {
+            maxLineWidthPx = maxOf(maxLineWidthPx, layout.size.width.toFloat())
+        }
     }
-    if (visualLines.isEmpty()) {
-        visualLines += VisualLine(
-            row = 0uL,
-            byteStart = 0uL,
-            text = "",
-            charWidths = emptyList(),
-        )
-        drawLayouts += textMeasurer.measure(AnnotatedString(""), textStyle)
-        drawTops += topMarginPx
-        contentHeightPx = topMarginPx + lineHeightPx
+    // Wrap locks horizontal scroll to the content width (like the old
+    // engine); no-wrap widens the canvas to the longest row instead.
+    val contentWidthPx = if (wrapEnabled) {
+        leftMarginPx + rightPadPx + wrapWidthPx
+    } else {
+        leftMarginPx + rightPadPx + maxLineWidthPx
     }
-    // Wordwrap locks horizontal scroll to the wrap width, like the old engine.
-    val contentWidthPx = leftMarginPx + rightPadPx + wrapWidthPx
     return RebuiltEditorLayout(
-        visualLines = visualLines,
-        drawLayouts = drawLayouts,
-        drawTops = drawTops,
+        rowLayouts = rowLayouts,
+        rowTops = rowTops,
         contentWidthPx = contentWidthPx,
         contentHeightPx = contentHeightPx,
     )
