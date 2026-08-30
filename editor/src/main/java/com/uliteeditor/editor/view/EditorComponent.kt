@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextRange
@@ -51,6 +52,8 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -89,6 +92,13 @@ private const val BLINK_PERIOD_MS = 500L
 
 /** `CursorManager.moveTo` tweened the caret in 120 ms. */
 private const val CARET_MOVE_ANIMATION_MS = 120
+
+/**
+ * Alpha tinting the live composing preview on the canvas: primary color at
+ * reduced opacity marks "held by the IME, not yet committed" (the composing
+ * region of a Gboard/suggestion span), mirroring Android's underline.
+ */
+private const val COMPOSING_ALPHA = 0.75f
 
 /**
  * sora-editor's pinch clamp: `EditorTouchEventHandler` keeps the text size
@@ -291,11 +301,76 @@ fun EditorComponent(
         Offset(point.x, point.y)
     }
 
+    // While the IME holds text in composition (autocorrect / suggestions /
+    // multi-tap), the engine buffer stays unchanged until the span is
+    // released — without help, the canvas draws nothing new and typing looks
+    // dead. Re-render the caret's row with the composing text inserted at
+    // the caret: every keystroke becomes visible immediately, in its real
+    // position, tinted to mark it unreleased. The engine stays authoritative;
+    // the preview vanishes as soon as the IME commits (its text then lands in
+    // the buffer and the normal layout rebuild draws it solid).
+    val composingText = imeField.composition?.let { span ->
+        val start = span.min.coerceIn(0, imeField.text.length)
+        val end = span.max.coerceIn(start, imeField.text.length)
+        if (start < end) {
+            // A composition crossing a newline would re-flow the whole row
+            // from a stale top; preview only up to the first break, the rest
+            // commits normally on release.
+            imeField.text.substring(start, end).substringBefore('\n').takeIf { it.isNotEmpty() }
+        } else {
+            null
+        }
+    }
+    val caretRow = session.cursor().row.toInt()
+    val caretUtf16 = utf16IndexAtByteOffset(
+        session.lineText(caretRow.toULong()),
+        session.cursor().column.toLong(),
+    )
+    val caretRowFirstTop = rebuilt.visualLines.indexOfFirst { it.row.toInt() == caretRow }
+        .let { if (it in rebuilt.drawTops.indices) rebuilt.drawTops[it] else caretContent.y }
+    val composingLayout = remember(
+        composingText,
+        textStyle,
+        wrapWidthPx,
+        caretRow,
+        caretUtf16,
+        contentTick,
+    ) {
+        composingText?.let { composing ->
+            val row = session.lineText(caretRow.toULong())
+            val merged = row.substring(0, caretUtf16) + composing + row.substring(caretUtf16)
+            textMeasurer.measure(
+                AnnotatedString(
+                    merged,
+                    spanStyle = SpanStyle(
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = COMPOSING_ALPHA),
+                    ),
+                    start = caretUtf16,
+                    end = caretUtf16 + composing.length,
+                ),
+                textStyle,
+                softWrap = true,
+                maxLines = Int.MAX_VALUE,
+                overflow = TextOverflow.Clip,
+                constraints = Constraints(maxWidth = wrapWidthPx.toInt().coerceAtLeast(1)),
+            )
+        }
+    }
+    val composingCaretContent = if (composingLayout != null && composingText != null) {
+        val box = composingLayout.getBoundingBox(
+            (caretUtf16 + composingText.length).coerceIn(0, composingLayout.layoutInput.text.length),
+        )
+        Offset(leftMarginPx + box.left, caretRowFirstTop + box.top)
+    } else {
+        null
+    }
+
     // ensure_visible must not fight the pinch's focus-anchored scroll while
     // a scale is in flight; it settles only when the gesture ends.
-    LaunchedEffect(caretContent, lineHeightPx, viewportWidthPx, viewportHeightPx, scaling) {
+    LaunchedEffect(caretContent, composingCaretContent, lineHeightPx, viewportWidthPx, viewportHeightPx, scaling) {
         if (scaling) return@LaunchedEffect
-        if (session.ensureVisible(caretContent.x, caretContent.y, lineHeightPx, viewportWidthPx, viewportHeightPx)) {
+        val anchor = composingCaretContent ?: caretContent
+        if (session.ensureVisible(anchor.x, anchor.y, lineHeightPx, viewportWidthPx, viewportHeightPx)) {
             scrollTick++
         }
     }
@@ -472,16 +547,31 @@ fun EditorComponent(
         Canvas(Modifier.fillMaxSize()) {
             translate(left = -scrollOffset.x, top = -scrollOffset.y) {
                 for (index in rebuilt.drawLayouts.indices) {
+                    // While composing, the caret's row is redrawn from the
+                    // merged layout below; skip its engine pieces so the
+                    // inserted composing text is not double-rendered.
+                    if (composingLayout != null && rebuilt.visualLines[index].row.toInt() == caretRow) {
+                        continue
+                    }
                     drawText(
                         textLayoutResult = rebuilt.drawLayouts[index],
                         color = contentColor,
                         topLeft = Offset(leftMarginPx, rebuilt.drawTops[index]),
                     )
                 }
+                composingLayout?.let { layout ->
+                    drawText(
+                        textLayoutResult = layout,
+                        color = contentColor,
+                        topLeft = Offset(leftMarginPx, caretRowFirstTop),
+                    )
+                }
                 if (blinkVisible) {
+                    val caretX = composingCaretContent?.x ?: animatedCaretX
+                    val caretY = composingCaretContent?.y ?: caretContent.y
                     drawRect(
                         color = caretColor,
-                        topLeft = Offset(animatedCaretX, caretContent.y),
+                        topLeft = Offset(caretX, caretY),
                         size = Size(cursorWidthPx, lineHeightPx),
                     )
                 }
