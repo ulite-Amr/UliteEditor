@@ -60,6 +60,7 @@ import com.uliteeditor.editor.effects.runMetricsLoop
 import com.uliteeditor.editor.ime.applyImeEdit
 import com.uliteeditor.editor.ime.createNoSuggestionsInterceptor
 import com.uliteeditor.editor.input.EditorGestureConfig
+import com.uliteeditor.editor.input.awaitGestures
 import com.uliteeditor.editor.layout.CaretSpot
 import com.uliteeditor.editor.layout.RebuiltEditorLayout
 import com.uliteeditor.editor.layout.buildEditorLayout
@@ -382,7 +383,7 @@ fun EditorComponent(
                 .clipToBounds()
                 .onSizeChanged { editorSize = it }
                 .pointerInput(session) {
-                    editorGestureConfig.awaitGestures()
+                    awaitGestures(editorGestureConfig)
                 },
         ) {
             Canvas(Modifier.fillMaxSize()) {
