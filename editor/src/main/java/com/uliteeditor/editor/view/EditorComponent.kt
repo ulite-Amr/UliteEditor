@@ -592,8 +592,10 @@ fun EditorComponent(
                                 if (layout != null) {
                                     val contentX = released.position.x + session.scrollX()
                                     val contentY = released.position.y + session.scrollY()
-                                    val rowIndex = layout.rowTops.indexOfLast { it <= contentY }
-                                    val row = if (rowIndex in layout.rowLayouts.indices) rowIndex else layout.rowLayouts.lastIndex
+                                    // A tap above the first row's top (the margin) picks row 0 —
+                                    // the old engine's locate_tap also fell through
+                                    // to the first visual line there.
+                                    val row = layout.rowTops.indexOfLast { it <= contentY }.coerceAtLeast(0)
                                     val hitTextRange = layout.rowLayouts[row].getOffsetForPosition(
                                         Offset(contentX - leftMarginPx, contentY - layout.rowTops[row]),
                                     )

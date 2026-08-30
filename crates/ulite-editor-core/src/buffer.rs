@@ -81,9 +81,8 @@ impl Buffer {
     /// trailing empty line (`"a\n"` → `["a", ""]`) — a loader for
     /// whole-document fills that the FFI facade (`crate::ffi::EditorSession`)
     /// uses, deliberately separate from the editor's mutation path (which
-    /// goes through the typed methods so the cache invalidation rule stays
-    /// in one place). Guarantees at least one line, the same invariant
-    /// `Buffer::new` holds.
+    /// goes through the typed methods). Guarantees at least one line, the
+    /// same invariant `Buffer::new` holds.
     pub fn from_lines(lines: impl IntoIterator<Item = impl Into<String>>) -> Self {
         let mut all = lines.into_iter().map(Line::new).collect::<Vec<_>>();
         if all.is_empty() {

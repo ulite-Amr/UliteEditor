@@ -46,12 +46,6 @@ impl CursorPosition {
             column: position.column as u64,
         }
     }
-
-    /// Narrows an FFI record back to the engine type. Callers clamp
-    /// values before converting, so the `as` truncation never loses bits.
-    fn into_engine(self) -> EngineCursorPosition {
-        EngineCursorPosition::new(self.row as usize, self.column as usize)
-    }
 }
 
 // ---------------------------------------------------------------------
