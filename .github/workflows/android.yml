@@ -71,13 +71,23 @@ jobs:
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
+      - name: Cache Rust registry and NDK build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/ulite-editor-core
+
+      - name: Cache cargo-ndk binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: cargo-ndk-v1
+
       - name: Generate UniFFI bindings + native libraries
         run: |
-          cargo install cargo-ndk
+          if ! command -v cargo-ndk >/dev/null 2>&1; then
+            cargo install cargo-ndk
+          fi
           scripts/build-ffi.sh
-
-      - name: Format check
-        run: gradle ktlintCheck --no-daemon
 
       - name: Restore release signing keystore
         id: keystore
@@ -93,8 +103,12 @@ jobs:
             echo "restored=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Unit tests + lint + assemble
-        run: gradle :editor:testDebugUnitTest :app:lintDebug :editor:lintDebug :app:assembleDebug :app:assembleRelease --no-daemon
+      - name: Format check + unit tests + lint + assemble
+        # One Gradle invocation (single configuration + warm JVM across tasks)
+        # instead of two cold ones; the Gradle User Home and the build cache
+        # are persisted by gradle/actions/setup-gradle@v4, so a warm build
+        # skips dependency and upstream-task rework entirely.
+        run: gradle ktlintCheck :editor:testDebugUnitTest :app:lintDebug :editor:lintDebug :app:assembleDebug :app:assembleRelease --no-daemon
         env:
           RELEASE_KEYSTORE_PATH: ${{ runner.temp }}/release-key.jks
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
