@@ -1,5 +1,8 @@
 package com.uliteeditor.editor.view
 
+import android.text.InputType
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.animation.core.animateFloatAsState
@@ -26,6 +29,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -38,19 +42,26 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.InterceptPlatformTextInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.platform.PlatformTextInputInterceptor
+import androidx.compose.ui.platform.PlatformTextInputMethodRequest
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -91,6 +102,13 @@ private const val BLINK_PERIOD_MS = 500L
 private const val CARET_MOVE_ANIMATION_MS = 120
 
 /**
+ * Alpha tinting the live composing preview on the canvas: primary color at
+ * reduced opacity marks "held by the IME, not yet committed" (the composing
+ * region of a Gboard/suggestion span), mirroring Android's underline.
+ */
+private const val COMPOSING_ALPHA = 0.75f
+
+/**
  * sora-editor's pinch clamp: `EditorTouchEventHandler` keeps the text size
  * inside `scaleMinSize`..`scaleMaxSize` (8..26 sp). The base font is
  * `FONT_SIZE_SP`; scaling moves the font (a `setTextSize`-style mechanism)
@@ -124,6 +142,7 @@ private const val MAX_FONT_SIZE_SP = 26f
  *   (the real InputConnection-backed editor is a follow-up, see PROGRESS).
  */
 @Composable
+@OptIn(ExperimentalComposeUiApi::class)
 fun EditorComponent(
     modifier: Modifier = Modifier,
     onMetricsChange: ((EditorMetrics) -> Unit)? = null,
@@ -146,6 +165,27 @@ fun EditorComponent(
     var imeField by remember { mutableStateOf(TextFieldValue(session.bufferText())) }
     val interactionScope = rememberCoroutineScope()
 
+    // The invisible pipe must not sit under whole-word composition: autocorrect
+    // / suggestion IMEs hold a word in the composing span until a release, and
+    // the engine only sees committed text. Ask for a no-suggestions plain-text
+    // input by tagging the EditorInfo with TYPE_TEXT_FLAG_NO_SUGGESTIONS —
+    // KeyboardOptions.autoCorrect is ignored by most IMEs for KeyboardType.Text.
+    // The interceptor must be remember-stable: passing a fresh instance while a
+    // session is live tears it down and restarts the keyboard every recomposition.
+    val noSuggestionsInterceptor = remember {
+        PlatformTextInputInterceptor { request, nextHandler ->
+            val modifiedRequest = object : PlatformTextInputMethodRequest {
+                override fun createInputConnection(outAttributes: EditorInfo): InputConnection {
+                    val connection = request.createInputConnection(outAttributes)
+                    outAttributes.inputType =
+                        outAttributes.inputType or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                    return connection
+                }
+            }
+            nextHandler.startInputMethod(modifiedRequest)
+        }
+    }
+
     fun syncImeField() {
         // While the IME is composing (suggestions / autocorrect / multi-tap),
         // its text lives only in the field, not in the engine buffer:
@@ -155,6 +195,15 @@ fun EditorComponent(
         // where composition is null; the IME's composing text then lands as a
         // single edit in the engine).
         if (imeField.composition != null) return
+        // The field can briefly hold text that never reached the engine (a
+        // composing span the IME ended without a commit callback, or a race
+        // between the final onValueChange and focus loss). Landing it before
+        // overwriting makes text-loss impossible on every sync path; once
+        // flushed, field and buffer are equal and this no-ops, so the extra
+        // contentTick++ converges instead of looping.
+        if (imeField.text != session.bufferText() && applyImeEdit(session, imeField.text)) {
+            contentTick++
+        }
         val current = session.bufferText()
         val selection = TextRange(
             utf16IndexAtByteOffset(current, absoluteByteOffsetOfCursor(session)),
@@ -282,11 +331,81 @@ fun EditorComponent(
         Offset(point.x, point.y)
     }
 
+    // While the IME holds text in composition (autocorrect / suggestions /
+    // multi-tap), the engine buffer stays unchanged until the span is
+    // released — without help, the canvas draws nothing new and typing looks
+    // dead. Re-render the caret's row with the composing text inserted at
+    // the caret: every keystroke becomes visible immediately, in its real
+    // position, tinted to mark it unreleased. The engine stays authoritative;
+    // the preview vanishes as soon as the IME commits (its text then lands in
+    // the buffer and the normal layout rebuild draws it solid).
+    val composingColor = MaterialTheme.colorScheme.primary.copy(alpha = COMPOSING_ALPHA)
+    val composingText = imeField.composition?.let { span ->
+        val start = span.min.coerceIn(0, imeField.text.length)
+        val end = span.max.coerceIn(start, imeField.text.length)
+        if (start < end) {
+            // A composition crossing a newline would re-flow the whole row
+            // from a stale top; preview only up to the first break, the rest
+            // commits normally on release.
+            imeField.text.substring(start, end).substringBefore('\n').takeIf { it.isNotEmpty() }
+        } else {
+            null
+        }
+    }
+    val caretRow = session.cursor().row.toInt()
+    val caretUtf16 = utf16IndexAtByteOffset(
+        session.lineText(caretRow.toULong()),
+        session.cursor().column.toLong(),
+    )
+    val caretRowFirstTop = rebuilt.visualLines.indexOfFirst { it.row.toInt() == caretRow }
+        .let { if (it in rebuilt.drawTops.indices) rebuilt.drawTops[it] else caretContent.y }
+    val composingLayout = remember(
+        composingText,
+        composingColor,
+        textStyle,
+        wrapWidthPx,
+        caretRow,
+        caretUtf16,
+        contentTick,
+    ) {
+        composingText?.let { composing ->
+            val row = session.lineText(caretRow.toULong())
+            val merged = buildAnnotatedString {
+                append(row.substring(0, caretUtf16))
+                val composingStart = length
+                append(composing)
+                addStyle(
+                    SpanStyle(color = composingColor),
+                    composingStart,
+                    composingStart + composing.length,
+                )
+                append(row.substring(caretUtf16))
+            }
+            textMeasurer.measure(
+                merged,
+                textStyle,
+                softWrap = true,
+                maxLines = Int.MAX_VALUE,
+                overflow = TextOverflow.Clip,
+                constraints = Constraints(maxWidth = wrapWidthPx.toInt().coerceAtLeast(1)),
+            )
+        }
+    }
+    val composingCaretContent = if (composingLayout != null && composingText != null) {
+        val box = composingLayout.getBoundingBox(
+            (caretUtf16 + composingText.length).coerceIn(0, composingLayout.layoutInput.text.length),
+        )
+        Offset(leftMarginPx + box.left, caretRowFirstTop + box.top)
+    } else {
+        null
+    }
+
     // ensure_visible must not fight the pinch's focus-anchored scroll while
     // a scale is in flight; it settles only when the gesture ends.
-    LaunchedEffect(caretContent, lineHeightPx, viewportWidthPx, viewportHeightPx, scaling) {
+    LaunchedEffect(caretContent, composingCaretContent, lineHeightPx, viewportWidthPx, viewportHeightPx, scaling) {
         if (scaling) return@LaunchedEffect
-        if (session.ensureVisible(caretContent.x, caretContent.y, lineHeightPx, viewportWidthPx, viewportHeightPx)) {
+        val anchor = composingCaretContent ?: caretContent
+        if (session.ensureVisible(anchor.x, anchor.y, lineHeightPx, viewportWidthPx, viewportHeightPx)) {
             scrollTick++
         }
     }
@@ -463,16 +582,31 @@ fun EditorComponent(
         Canvas(Modifier.fillMaxSize()) {
             translate(left = -scrollOffset.x, top = -scrollOffset.y) {
                 for (index in rebuilt.drawLayouts.indices) {
+                    // While composing, the caret's row is redrawn from the
+                    // merged layout below; skip its engine pieces so the
+                    // inserted composing text is not double-rendered.
+                    if (composingLayout != null && rebuilt.visualLines[index].row.toInt() == caretRow) {
+                        continue
+                    }
                     drawText(
                         textLayoutResult = rebuilt.drawLayouts[index],
                         color = contentColor,
                         topLeft = Offset(leftMarginPx, rebuilt.drawTops[index]),
                     )
                 }
+                composingLayout?.let { layout ->
+                    drawText(
+                        textLayoutResult = layout,
+                        color = contentColor,
+                        topLeft = Offset(leftMarginPx, caretRowFirstTop),
+                    )
+                }
                 if (blinkVisible) {
+                    val caretX = composingCaretContent?.x ?: animatedCaretX
+                    val caretY = composingCaretContent?.y ?: caretContent.y
                     drawRect(
                         color = caretColor,
-                        topLeft = Offset(animatedCaretX, caretContent.y),
+                        topLeft = Offset(caretX, caretY),
                         size = Size(cursorWidthPx, lineHeightPx),
                     )
                 }
@@ -481,42 +615,58 @@ fun EditorComponent(
 
         // Invisible IME pipe: one 1 dp field whose text is always snap-synced
         // to the engine buffer (invariant 3). Programmatic writes do not fire
-        // onValueChange, so there are no feedback loops.
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .size(1.dp),
+        // onValueChange, so there are no feedback loops. The input session of
+        // every field below passes through the no-suggestions interceptor (see
+        // `noSuggestionsInterceptor`), so the IME tags its own EditorInfo.
+        InterceptPlatformTextInput(
+            interceptor = noSuggestionsInterceptor,
         ) {
-            BasicTextField(
-                value = imeField,
-                onValueChange = { newValue ->
-                    // Mirror the IME's authoritative view (text + composing
-                    // range) exactly — writing composition = null here would
-                    // force-commit the active composition and reset the
-                    // keyboard (suggestion strip / layout). Real-time typing
-                    // then comes from committing only what the IME released.
-                    imeField = newValue
-                    val composed = newValue.composition
-                    val committedText = if (composed != null) {
-                        // The engine sees everything outside the live composing
-                        // span, so each new keystroke lands immediately; the
-                        // composed segment commits as one edit the moment the
-                        // IME releases it (composition == null).
-                        newValue.text.removeRange(composed.min until composed.max)
-                    } else {
-                        newValue.text
-                    }
-                    if (applyImeEdit(session, committedText)) {
-                        contentTick++
-                    }
-                },
+            Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .focusRequester(focusRequester)
-                    .onFocusChanged { editing = it.isFocused },
-                textStyle = TextStyle(color = Color.Transparent, fontSize = 16.sp),
-                cursorBrush = SolidColor(Color.Transparent),
-            )
+                    .align(Alignment.TopStart)
+                    .size(1.dp),
+            ) {
+                BasicTextField(
+                    value = imeField,
+                    onValueChange = { newValue ->
+                        // Mirror the IME's authoritative view (text + composing
+                        // range) exactly — writing composition = null here would
+                        // force-commit the active composition and reset the
+                        // keyboard (suggestion strip / layout). Real-time typing
+                        // then comes from committing only what the IME released.
+                        imeField = newValue
+                        val composed = newValue.composition
+                        val committedText = if (composed != null) {
+                            // The engine sees everything outside the live composing
+                            // span, so each new keystroke lands immediately; the
+                            // composed segment commits as one edit the moment the
+                            // IME releases it (composition == null).
+                            newValue.text.removeRange(composed.min until composed.max)
+                        } else {
+                            newValue.text
+                        }
+                        if (applyImeEdit(session, committedText)) {
+                            contentTick++
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .focusRequester(focusRequester)
+                        .onFocusChanged {
+                            if (!it.isFocused && imeField.composition != null) {
+                                // Clearing focus makes the platform cancel the
+                                // active composition, which would silently drop
+                                // the word mid-typing. Land it in the engine first.
+                                if (applyImeEdit(session, imeField.text)) {
+                                    contentTick++
+                                }
+                            }
+                            editing = it.isFocused
+                        },
+                    textStyle = TextStyle(color = Color.Transparent, fontSize = 16.sp),
+                    cursorBrush = SolidColor(Color.Transparent),
+                )
+            }
         }
         }
     }
@@ -525,8 +675,8 @@ fun EditorComponent(
         if (editing) {
             // First back: drop the keyboard and the field's focus; the next
             // back falls through to the host's default (exit).
-            focusManager.clearFocus()
             keyboardController?.hide()
+            focusManager.clearFocus()
         } else {
             backDispatcher?.onBackPressed()
         }
