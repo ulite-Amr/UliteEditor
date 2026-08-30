@@ -28,6 +28,7 @@ import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -41,12 +42,14 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextMotion
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -104,7 +107,7 @@ import uniffi.ulite_editor_core.EditorSession
  * instance to keep the toggles (word wrap) shared with the app's UI.
  */
 @Composable
-@OptIn(ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalTextApi::class)
 fun EditorComponent(
     modifier: Modifier = Modifier,
     settings: EditorSettings? = null,
@@ -197,6 +200,12 @@ fun EditorComponent(
         fontFamily = FontFamily.Monospace,
         fontSize = fontSizeSp.sp,
         lineHeight = lineHeightSp.sp,
+        // Animated glyph placement keyframes the x of each glyph between
+        // layouts, so a drag that re-Wraps a line under the caret slides the
+        // rows instead of letting them snap (the on-device "shimmer"/jitter
+        // while scrolling). Line metrics still advance identically, so the
+        // caret geometry and hit-testing below are unaffected.
+        textMotion = TextMotion.Animated,
     )
     val lineHeightPx = with(density) { lineHeightSp.sp.toPx() }
     val topMarginPx = with(density) { EditorDimensions.TOP_MARGIN_DP.dp.toPx() }
@@ -362,11 +371,15 @@ fun EditorComponent(
     ) {
         // The visible area is inset inside a *full-bleed* background: window
         // (status/nav/keyboard) insets are consumed here so the theme color —
-        // not the window's default — shows under the status bar.
+        // not the window's default — shows under the status bar. The clip
+        // keeps drawn content (rows that scroll under the app bar) inside
+        // this inset bounds — the canvas is inset, but the old scrolled rows
+        // could paint clear of the safe area and over the TopAppBar.
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .safeDrawingPadding()
+                .clipToBounds()
                 .onSizeChanged { editorSize = it }
                 .pointerInput(session) {
                     editorGestureConfig.awaitGestures()

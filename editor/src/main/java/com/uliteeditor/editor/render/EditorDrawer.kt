@@ -35,21 +35,47 @@ internal data class EditorDrawState(
  * Draws the editor's content: the document rows, the live composing preview
  * over its caret row, and the caret. The whole body is translated by the
  * scroll offset so all draw coordinates stay in content space.
+ *
+ * Only the rows intersecting the visible viewport are drawn (a binary search
+ * over the ascending row tops finds the window): the fling/pan camera never
+ * repaints the whole document, which keeps long-document scrolling smooth.
  */
 internal fun DrawScope.drawEditorContent(state: EditorDrawState) {
     translate(left = -state.scrollOffset.x, top = -state.scrollOffset.y) {
-        for (row in state.rebuilt.rowLayouts.indices) {
-            // While composing, the caret's row is redrawn from the merged
-            // composing layout below; skip its engine pieces so the inserted
-            // composing text is not double-rendered.
-            if (state.composingLayout != null && row == state.caretRow) {
-                continue
+        val rowTops = state.rebuilt.rowTops
+        val heightOf = { index: Int -> state.rebuilt.rowLayouts[index].size.height.toFloat() }
+        if (rowTops.isNotEmpty()) {
+            val viewTop = state.scrollOffset.y
+            val viewBottom = state.scrollOffset.y + size.height
+            // First row whose bottom edge lies at or below the viewport top.
+            var low = 0
+            var high = rowTops.size
+            while (low < high) {
+                val mid = (low + high) ushr 1
+                if (rowTops[mid] + heightOf(mid) <= viewTop) low = mid + 1 else high = mid
             }
-            drawText(
-                textLayoutResult = state.rebuilt.rowLayouts[row],
-                color = state.contentColor,
-                topLeft = Offset(state.leftMarginPx, state.rebuilt.rowTops[row]),
-            )
+            val firstRow = low
+            // Last row whose top edge lies above the viewport bottom.
+            low = 0
+            high = rowTops.size
+            while (low < high) {
+                val mid = (low + high) ushr 1
+                if (rowTops[mid] < viewBottom) low = mid + 1 else high = mid
+            }
+            val lastRow = low - 1
+            for (row in firstRow..lastRow) {
+                // While composing, the caret's row is redrawn from the merged
+                // composing layout below; skip its engine pieces so the
+                // inserted composing text is not double-rendered.
+                if (state.composingLayout != null && row == state.caretRow) {
+                    continue
+                }
+                drawText(
+                    textLayoutResult = state.rebuilt.rowLayouts[row],
+                    color = state.contentColor,
+                    topLeft = Offset(state.leftMarginPx, state.rebuilt.rowTops[row]),
+                )
+            }
         }
         state.composingLayout?.let { layout ->
             drawText(
