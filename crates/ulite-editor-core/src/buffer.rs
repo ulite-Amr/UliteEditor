@@ -1,27 +1,26 @@
 //! Logical lines and the buffer that holds them, with the byte-offset
 //! mutation primitives IME/input operations build on. All edits go through
-//! the single mutation point (`Line::content_mut`); wrap caches are
-//! caller-owned and live in `layout::wrap_line` — this module is just the
-//! buffer half of replacing `TextLineModel`'s content-snapshot
-//! cache-validity check.
+//! the single mutation point (`Line::content_mut`). Glyph-space geometry —
+//! wrap, caret, taps — is deliberately *not* here: the Compose renderer
+//! measures real text, so this module stays pure state and byte math and
+//! needs no caches (see `.project/ARCHITECTURE.md`).
 
 /// One logical (unwrapped) line of text.
 ///
 /// The old code split this across two classes — `EditorState` held the
 /// list of lines, `TextLineModel` held one line's content *and* its own
 /// wrap cache (`core/state/EditorState.java`, `model/TextLineModel.java`).
-/// Here the cache is not owned by the line: `layout::wrap_line` takes it
-/// as a caller-supplied parameter, so it belongs to whichever layer lays
-/// the buffer out. The earlier `pub(crate)` field in this file sat in a
-/// crate with nothing wired to populate it — this is the outcome of that
-/// audit (see `.project/ARCHITECTURE.md`).
+/// Here there is no line-owned cache: layout is owned by the Compose
+/// renderer, which rebuilds a line's `TextLayoutResult` whenever the text,
+/// width, or style changes — the renderer ports `TextLineModel`'s
+/// cache-validity check instead (see `.project/ARCHITECTURE.md`).
 #[derive(Debug, Clone, Default)]
 pub struct Line {
     content: String,
 }
 
 impl Line {
-    /// Creates a line holding `content`, with no wrap cache yet.
+    /// Creates a line holding `content`, with no layout yet.
     pub fn new(content: impl Into<String>) -> Self {
         Self {
             content: content.into(),
@@ -44,11 +43,10 @@ impl Line {
     }
 
     /// Single mutation point for the line's content — every edit goes
-    /// through here. No wrap cache lives on the line anymore (see the
-    /// struct doc), but this indirection is kept so that cache
-    /// invalidation has exactly one place to land when the layout
-    /// layer's cache returns, and so callers can't hold disjoint
-    /// `&str`/`&mut` views of the same content by accident.
+    /// through here. Callers can't hold disjoint `&str`/`&mut` views of
+    /// the same content by accident; the Compose renderer rebuilds a
+    /// line's layout on every state change anyway, so there is nothing
+    /// else to invalidate here.
     fn content_mut(&mut self) -> &mut String {
         &mut self.content
     }
@@ -83,9 +81,8 @@ impl Buffer {
     /// trailing empty line (`"a\n"` → `["a", ""]`) — a loader for
     /// whole-document fills that the FFI facade (`crate::ffi::EditorSession`)
     /// uses, deliberately separate from the editor's mutation path (which
-    /// goes through the typed methods so the cache invalidation rule stays
-    /// in one place). Guarantees at least one line, the same invariant
-    /// `Buffer::new` holds.
+    /// goes through the typed methods). Guarantees at least one line, the
+    /// same invariant `Buffer::new` holds.
     pub fn from_lines(lines: impl IntoIterator<Item = impl Into<String>>) -> Self {
         let mut all = lines.into_iter().map(Line::new).collect::<Vec<_>>();
         if all.is_empty() {
@@ -105,17 +102,15 @@ impl Buffer {
         &self.lines[row]
     }
 
-    /// Mutably borrows the line at `row` for direct edits; any mutation
-    /// through the returned line invalidates its wrap cache (see
-    /// `Line::content_mut`). Prefer the typed methods below.
+    /// Mutably borrows the line at `row` for direct edits.
+    /// Prefer the typed methods below.
     pub fn line_mut(&mut self, row: usize) -> &mut Line {
         &mut self.lines[row]
     }
 
     /// All logical lines in order — read-only access for iterating and
     /// rendering (e.g. feeding the layout layer). Mutations go through
-    /// the typed methods so the cache-invalidation rule stays in one
-    /// place.
+    /// the typed methods, keeping them in the column-slicing contract.
     pub fn lines(&self) -> &[Line] {
         &self.lines
     }

@@ -1,8 +1,7 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
-//! Buffer, cursor, wrap, hit-test, scroll, and text-direction logic for
-//! UliteEditor.
+//! Buffer, cursor, input, scroll, and FFI logic for UliteEditor.
 //!
 //! This crate is deliberately UI-free: no rendering, no animation, no
 //! text measurement, no platform APIs. Those stay on the Compose side —
@@ -10,36 +9,32 @@
 //! (Android/Java) file each module here replaces, and why the split
 //! landed where it did.
 //!
+//! Glyph-space geometry (wrapping, caret placement, tap hit-testing) is
+//! deliberately *not* in this crate: text is measured and laid out by the
+//! Compose renderer, whose bidi/shaping results only it can produce. The
+//! crate therefore owns everything that is direction-agnostic byte math —
+//! the buffer, cursor, insert/newline/backspace, and the scroll camera.
+//!
 //! Modules:
 //! - [`buffer`] — the line store (replaces `EditorState` + `TextLineModel`)
 //! - [`cursor`] — cursor position type
 //! - [`input`] — insert/newline/backspace (replaces `InputProcessor`)
-//! - [`layout`] — word-wrap + per-line cache (replaces `LayoutManager`,
-//!   minus the text measurement it also did)
-//! - [`hit_test`] — tap-to-position, cursor-to-screen-position (replaces
-//!   the geometry half of `NoteScribeEngine`)
 //! - [`scroll`] — camera-follow bounds/clamping/fling (replaces
 //!   `ScrollManager`'s math; fling physics is new, not ported — see
 //!   [`scroll::ScrollState`]'s doc comment)
-//! - [`direction`] — RTL heuristic (replaces `TextDirectionHelper`)
-//! - [`ffi`] — the UniFFI bridge: [`ffi::EditorSession`] (a facade owning
-//!   buffer + cursor + wrap caches + scroll camera) plus the hit-test and
-//!   RTL entry points the Kotlin bindings call. Persists as the only
-//!   cross-language surface — see `.project/ARCHITECTURE.md` for the
-//!   UniFFI-versus-JNI decision.
+//! - [`ffi`] — the UniFFI bridge: [`ffi::EditorSession`], a facade owning
+//!   buffer + cursor + scroll camera. Persists as the only cross-language
+//!   surface — see `.project/ARCHITECTURE.md` for the UniFFI-versus-JNI
+//!   decision.
 
 pub mod buffer;
 pub mod cursor;
-pub mod direction;
 pub mod ffi;
-pub mod hit_test;
 pub mod input;
-pub mod layout;
 pub mod scroll;
 
 pub use buffer::Buffer;
-pub use ffi::{cursor_screen_position, is_rtl, locate_tap};
-pub use ffi::{CursorPosition, EditorSession, Point, VisualLine, WrappedLine};
+pub use ffi::{CursorPosition, EditorSession};
 
 /// Tag type UniFFI's generated UDL scaffolding uses to tie every exported
 /// item's metadata to this specific crate. Its attribute macros reference it
