@@ -55,9 +55,9 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.KeyboardOptions
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
@@ -339,6 +339,7 @@ fun EditorComponent(
     // position, tinted to mark it unreleased. The engine stays authoritative;
     // the preview vanishes as soon as the IME commits (its text then lands in
     // the buffer and the normal layout rebuild draws it solid).
+    val composingColor = MaterialTheme.colorScheme.primary.copy(alpha = COMPOSING_ALPHA)
     val composingText = imeField.composition?.let { span ->
         val start = span.min.coerceIn(0, imeField.text.length)
         val end = span.max.coerceIn(start, imeField.text.length)
@@ -360,6 +361,7 @@ fun EditorComponent(
         .let { if (it in rebuilt.drawTops.indices) rebuilt.drawTops[it] else caretContent.y }
     val composingLayout = remember(
         composingText,
+        composingColor,
         textStyle,
         wrapWidthPx,
         caretRow,
@@ -368,16 +370,19 @@ fun EditorComponent(
     ) {
         composingText?.let { composing ->
             val row = session.lineText(caretRow.toULong())
-            val merged = row.substring(0, caretUtf16) + composing + row.substring(caretUtf16)
+            val merged = buildAnnotatedString {
+                append(row.substring(0, caretUtf16))
+                val composingStart = length
+                append(composing)
+                addStyle(
+                    SpanStyle(color = composingColor),
+                    composingStart,
+                    composingStart + composing.length,
+                )
+                append(row.substring(caretUtf16))
+            }
             textMeasurer.measure(
-                AnnotatedString(
-                    merged,
-                    spanStyle = SpanStyle(
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = COMPOSING_ALPHA),
-                    ),
-                    start = caretUtf16,
-                    end = caretUtf16 + composing.length,
-                ),
+                merged,
                 textStyle,
                 softWrap = true,
                 maxLines = Int.MAX_VALUE,
@@ -660,7 +665,6 @@ fun EditorComponent(
                         },
                     textStyle = TextStyle(color = Color.Transparent, fontSize = 16.sp),
                     cursorBrush = SolidColor(Color.Transparent),
-                    keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
                 )
             }
         }
