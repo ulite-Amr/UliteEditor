@@ -1,6 +1,8 @@
 package com.uliteeditor.editor.settings
 
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 
 /**
  * Editor preferences apps can tune and hand to [com.uliteeditor.editor.view.EditorComponent].

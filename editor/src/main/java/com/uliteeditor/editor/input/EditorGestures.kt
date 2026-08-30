@@ -2,9 +2,8 @@ package com.uliteeditor.editor.input
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerInputScope
-import androidx.compose.ui.input.pointer.awaitPointerEvent
 import androidx.compose.ui.input.pointer.util.VelocityTracker
-import androidx.compose.ui.unit.ViewConfiguration
+import androidx.compose.ui.platform.ViewConfiguration
 import com.uliteeditor.editor.EditorDimensions
 import com.uliteeditor.editor.bidi.TextIndex
 import com.uliteeditor.editor.layout.RebuiltEditorLayout
