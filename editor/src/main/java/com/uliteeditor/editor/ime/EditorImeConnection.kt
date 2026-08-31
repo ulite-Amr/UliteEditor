@@ -178,7 +178,11 @@ internal class EditorImeNodeElement(
         node.onImeCaretMoved = onImeCaretMoved
         node.onFocusChanged = onFocusChanged
         node.handle = handle
-        node.activeConnection?.onCallbacksChanged(onEdited, onImeCaretMoved)
+        node.activeConnection?.onCallbacksChanged(
+            onComposingChanged,
+            onEdited,
+            onImeCaretMoved,
+        )
     }
 }
 
@@ -223,7 +227,7 @@ internal class EditorImeConnection(
     /** Mirror of the text the IME sees (engine text + live composing span). */
     private var mirror: String = session.bufferText()
     /** UTF-16 caret in [mirror] (always a collapsed selection here). */
-    private var mirrorCaret: Int = engineCaretUtf16(session, mirror)
+    private var mirrorCaret: Int = engineCaretUtf16(mirror, session)
     /** UTF-16 composing range in [mirror]; -1 when no span is active. */
     private var composingStart: Int = -1
     private var composingEnd: Int = -1
@@ -232,9 +236,11 @@ internal class EditorImeConnection(
 
     /** Refreshes callbacks on recomposition while the session is live. */
     fun onCallbacksChanged(
+        onComposingChanged: (String?) -> Unit,
         onEdited: () -> Unit,
         onImeCaretMoved: () -> Unit,
     ) {
+        this.onComposingChanged = onComposingChanged
         this.onEdited = onEdited
         this.onImeCaretMoved = onImeCaretMoved
     }
@@ -323,8 +329,11 @@ internal class EditorImeConnection(
             synchronized(lock) {
                 val committed = text?.toString() ?: ""
                 if (composingStart >= 0) {
+                    // Capture the span start before replaceMirror clears it
+                    // (it drops the span because the edit covers the span).
+                    val originalStart = composingStart
                     replaceMirror(composingStart, composingEnd, committed)
-                    mirrorCaret = composingStart + committed.length
+                    mirrorCaret = originalStart + committed.length
                     composingStart = -1
                     composingEnd = -1
                 } else {
@@ -524,13 +533,15 @@ internal class EditorImeConnection(
     /** Applies one IME edit to the engine and refreshes the mirror/caret. */
     private fun syncEngineAndNotify() {
         val bufferBefore = session.bufferText()
-        val changed = applyImeEdit(session, engineTextToApply())
+        applyImeEdit(session, engineTextToApply())
         setEngineCaretTo(mirrorCaret)
         pullSelectionFromEngine()
-        val textChanged = session.bufferText() != bufferBefore
-        when {
-            textChanged -> onEdited()
-            changed -> onImeCaretMoved()
+        if (session.bufferText() != bufferBefore) {
+            onEdited()
+        } else {
+            // No net text change (e.g. an edit that cancelled out); the caret
+            // movement alone is what the preview needs to reflect.
+            onImeCaretMoved()
         }
         setComposingPreview()
     }
@@ -558,13 +569,18 @@ internal class EditorImeConnection(
         val delta = replacement.length - (to - from)
         when {
             composingEnd <= from -> {
+                // Span sits strictly before the edit, whose length change is
+                // after it — the span's indices do not move.
+            }
+            to <= composingStart -> {
+                // Span sits strictly after the edit; shift it by the length
+                // delta of the text inserted before it.
                 composingStart += delta
                 composingEnd += delta
             }
-            to <= composingStart -> {
-                // Span fully after the edit; unchanged.
-            }
             else -> {
+                // The edit overlaps the span — the span no longer describes
+                // a contiguous run, so drop it.
                 composingStart = -1
                 composingEnd = -1
             }
@@ -585,8 +601,13 @@ internal class EditorImeConnection(
         var remaining = n
         while (remaining > 0 && offset > 0) {
             offset--
-            while (offset > 0 && mirror[offset].isLowSurrogate()) offset--
-            if (mirror[offset].isHighSurrogate()) offset--
+            // A low surrogate that follows its high surrogate is one code
+            // point: back over both (malformed lone surrogates just step one).
+            if (mirror[offset].isLowSurrogate() && offset > 0 &&
+                mirror[offset - 1].isHighSurrogate()
+            ) {
+                offset--
+            }
             remaining--
         }
         return offset
