@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.Editable
 import android.text.InputType
+import android.text.SpannedString
 import android.view.KeyEvent
 import android.view.inputmethod.CompletionInfo
 import android.view.inputmethod.CorrectionInfo
@@ -179,6 +180,7 @@ internal data class EditorImeNodeElement(
         node.onImeCaretMoved = onImeCaretMoved
         node.onFocusChanged = onFocusChanged
         node.handle = handle
+        handle.node = node
         node.activeConnection?.onCallbacksChanged(
             onComposingChanged,
             onEdited,
@@ -278,23 +280,26 @@ internal class EditorImeConnection(
     override fun getTextBeforeCursor(n: Int, flags: Int): CharSequence? =
         synchronized(lock) {
             val count = n.coerceAtMost(mirrorCaret)
-            mirror.substring(mirrorCaret - count, mirrorCaret)
+            val text = mirror.substring(mirrorCaret - count, mirrorCaret)
+            if (flags and InputConnection.GET_TEXT_WITH_STYLES != 0) {
+                SpannedString(text)
+            } else {
+                text
+            }
         }
 
     override fun getTextAfterCursor(n: Int, flags: Int): CharSequence? =
         synchronized(lock) {
             val count = n.coerceAtMost(mirror.length - mirrorCaret)
-            mirror.substring(mirrorCaret, mirrorCaret + count)
-        }
-
-    override fun getSelectedText(flags: Int): CharSequence? =
-        synchronized(lock) {
-            if (composingStart in 0 until composingEnd) {
-                mirror.substring(composingStart, composingEnd)
+            val text = mirror.substring(mirrorCaret, mirrorCaret + count)
+            if (flags and InputConnection.GET_TEXT_WITH_STYLES != 0) {
+                SpannedString(text)
             } else {
-                null
+                text
             }
         }
+
+    override fun getSelectedText(flags: Int): CharSequence? = null
 
     override fun getCursorCapsMode(reqModes: Int): Int = 0
 
@@ -408,9 +413,11 @@ internal class EditorImeConnection(
     }
 
     override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
+        val before = beforeLength.coerceAtLeast(0)
+        val after = afterLength.coerceAtLeast(0)
         mainHandler.post {
             synchronized(lock) {
-                deleteAround(mirrorCaret - beforeLength, mirrorCaret + afterLength)
+                deleteAround(mirrorCaret - before, mirrorCaret + after)
             }
         }
         return true
@@ -645,13 +652,17 @@ internal class EditorImeConnection(
         return when (event.keyCode) {
             KeyEvent.KEYCODE_DEL -> {
                 mainHandler.post {
-                    synchronized(lock) { deleteAround(mirrorCaret - 1, mirrorCaret) }
+                    synchronized(lock) {
+                        deleteAround(codePointsBack(mirrorCaret, 1), mirrorCaret)
+                    }
                 }
                 true
             }
             KeyEvent.KEYCODE_FORWARD_DEL -> {
                 mainHandler.post {
-                    synchronized(lock) { deleteAround(mirrorCaret, mirrorCaret + 1) }
+                    synchronized(lock) {
+                        deleteAround(mirrorCaret, codePointsForward(mirrorCaret, 1))
+                    }
                 }
                 true
             }
