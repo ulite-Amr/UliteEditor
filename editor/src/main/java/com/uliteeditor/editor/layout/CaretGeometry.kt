@@ -20,16 +20,12 @@ internal data class CaretSpot(val x: Float, val y: Float)
  * Arabic run leaves its caret back on the English/left side.
  *
  * The mirror is decided per *run* (`getBidiRunDirection`), not per paragraph
- * (`getParagraphDirection`), and the run is looked up one offset before the
- * caret (`max(utf16 - 1, 0)`): `getBidiRunDirection` resolves the run that
- * *contains* the offset, and at a run's boundary or the end of a line it
- * falls through to LTR (AOSP `Layout.isRtlCharAt`). The caret sits exactly
- * on such a boundary while typing forward, so probing the caret offset
- * itself would always pick the left branch there; stepping back picks the
- * run the caret actually edits, the same trick the platform's selection
- * handles use. On an empty or leading position the probe is offset 0,
- * which has no run and stays LTR (caret on the left), matching a blank
- * platform field.
+ * (`getParagraphDirection`), and the run is resolved from the *strong*
+ * character that anchors the caret rather than from whatever neutral sits on
+ * the boundary (see [caretRunDirection]): a trailing Space after an Arabic
+ * run inherits the RTL run instead of collapsing the caret to the left. On
+ * an empty or leading position the probe stays LTR (caret on the left),
+ * matching a blank platform field.
  *
  * This is the deliberate divergence chosen for the mixed-line follow-up
  * (English paragraph with Arabic typed into it → right-side Arabic caret);
@@ -39,11 +35,60 @@ internal data class CaretSpot(val x: Float, val y: Float)
  */
 internal fun caretXIn(layout: TextLayoutResult, utf16: Int, leftMarginPx: Float): Float {
     val caretRect = layout.getCursorRect(utf16)
-    // The character immediately before the caret — see the KDoc above.
-    val caretRun = layout.getBidiRunDirection((utf16 - 1).coerceAtLeast(0))
+    val caretRun = caretRunDirection(layout, utf16)
     return when (caretRun) {
         ResolvedTextDirection.Rtl -> layout.size.width - caretRect.right + leftMarginPx
         ResolvedTextDirection.Ltr -> leftMarginPx + caretRect.left
+    }
+}
+
+/**
+ * Bidi direction of the run the caret at [utf16] actually edits, choosing a
+ * strong character to anchor the mirror instead of the directionally-neutral
+ * whitespace that usually sits on the caret boundary.
+ *
+ * A Space typed after an Arabic run is itself neutral, and a plain
+ * `getBidiRunDirection(utf16 - 1)` on it falls through to LTR — the "caret
+ * jumps far-left on Space" symptom. So the probe prefers, in order:
+ * 1. A strong character AT the caret (index [utf16]) — the instant a strong
+ *    char is typed it lands here, so the caret snaps back to that char's
+ *    direction right away (typing Latin into an Arabic line flips the caret
+ *    left immediately; ignoring this would let a Space, then a letter, keep
+ *    the stale right-side caret for one extra char).
+ * 2. The last strong character before the caret, walking back across
+ *    trailing whitespace / NBSP (U+00A0) / ZWSP (U+200B) / lone low
+ *    surrogates — so a Space typed after Arabic inherits the trailing RTL
+ *    run and the caret stays on the right.
+ * 3. LTR for an empty text or a fully-leading position, matching a blank
+ *    platform field.
+ */
+private fun caretRunDirection(layout: TextLayoutResult, utf16: Int): ResolvedTextDirection {
+    val text = layout.layoutInput.text.text
+    if (text.isEmpty()) return ResolvedTextDirection.Ltr
+    // 1. A strong char sits exactly at the caret boundary.
+    if (utf16 in 0 until text.length && isStrongChar(text, utf16)) {
+        return layout.getBidiRunDirection(utf16)
+    }
+    // 2. Walk back to the last strong char across trailing neutrals.
+    var index = (utf16 - 1).coerceAtMost(text.length - 1)
+    while (index >= 0) {
+        if (isStrongChar(text, index)) return layout.getBidiRunDirection(index)
+        index--
+    }
+    return ResolvedTextDirection.Ltr
+}
+
+private fun isStrongChar(text: String, index: Int): Boolean {
+    val char = text[index]
+    return when {
+        char.isWhitespace() -> false
+        // NBSP and ZWSP are non-breaking / zero-width spaces: neutral, so
+        // they must not anchor the caret on their own.
+        char == '\u00A0' || char == '\u200B' -> false
+        // A lone low surrogate carries no code point; keep walking to its
+        // high surrogate so surrogate pairs resolve as one strong char.
+        char.isLowSurrogate() -> false
+        else -> true
     }
 }
 
