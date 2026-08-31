@@ -11,17 +11,26 @@ internal data class CaretSpot(val x: Float, val y: Float)
 /**
  * X, in content space, of the caret at UTF-16 [utf16] inside [layout].
  * `getCursorRect` is bidi-aware and valid at offset == end-of-line (unlike
- * getBoundingBox). For a *resolved RTL paragraph* its coordinates are measured
- * from the line's right edge, so the x must be mirrored exactly the way the
- * platform's own field does it (`layoutWidth - caretRect.right`, cf. androidx
+ * getBoundingBox). RTL runs are measured from the line's right edge, so the
+ * x must be mirrored exactly the way the platform's own field does it
+ * (`layoutWidth - caretRect.right`, cf. androidx
  * `TextFieldCoreModifier.getCursorRectInScroller`) — without the mirror, an
- * Arabic line (paragraph direction RTL because it starts with a strong RTL
- * letter, regardless of the device language) leaves the caret back on the
- * English/left side. LTR paragraphs keep the plain left edge.
+ * Arabic run leaves its caret back on the English/left side.
+ *
+ * The mirror is decided per *run* (`getBidiRunDirection`), not per paragraph
+ * (`getParagraphDirection`). A line whose base direction is LTR (it starts
+ * with a strong LTR letter) but that has Arabic text typed in it still
+ * places its caret on the right while editing that Arabic run — the
+ * platform-edit-text behavior. The paragraph-level check put every caret on
+ * the left of such a line even while typing Arabic (the on-device
+ * misalignment): paragraph direction only governs base alignment, not the
+ * caret of a mirror-embedded run. A neutral offset resolves as the run's
+ * direction; an empty line has no run and stays LTR (caret on the left),
+ * matching a platform field before any text is typed.
  */
 internal fun caretXIn(layout: TextLayoutResult, utf16: Int, leftMarginPx: Float): Float {
     val caretRect = layout.getCursorRect(utf16)
-    return when (layout.getParagraphDirection(utf16)) {
+    return when (layout.getBidiRunDirection(utf16)) {
         ResolvedTextDirection.Rtl -> layout.size.width - caretRect.right + leftMarginPx
         ResolvedTextDirection.Ltr -> leftMarginPx + caretRect.left
     }
