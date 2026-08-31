@@ -3,7 +3,9 @@
 
 /// Camera-follow scroll state: bounds, clamped position, and the
 /// keep-cursor-visible logic. Ports the pure-math parts of
-/// `core/engine/ScrollManager.java`.
+/// `core/engine/ScrollManager.java`, plus one deliberate extension,
+/// `follow_caret_after_edit` (`ScrollManager` never existed as a base for
+/// it — see the method doc), for the anchored-while-typing fix.
 ///
 /// What's *not* ported: `ScrollManager` delegated its fling deceleration
 /// to `android.widget.OverScroller`, a platform class whose internal
@@ -20,12 +22,28 @@ pub struct ScrollState {
     max_scroll_y: f32,
     velocity_x: f32,
     velocity_y: f32,
+    // The caret's content-space y from the previous `follow_caret_after_edit`
+    // call — the reference point for the bottom-band anchoring (set every
+    // call, never reset; taps go through `ensure_visible` and leave it alone,
+    // and the band check self-corrects anyway because it compares against the
+    // current scroll).
+    follow_anchor_y: Option<f32>,
 }
 
 /// Pixels of safety margin kept between the cursor and the viewport edge
 /// before the camera moves — same constant and same purpose as
 /// `ScrollManager.SCROLL_OFFSET`.
 pub const SCROLL_OFFSET: f32 = 50.0;
+
+/// Fraction of the viewport height that defines the *typing band*: once the
+/// caret's bottom sits in the lower half of the screen while the user types,
+/// `follow_caret_after_edit` pins the caret row and slides the camera down
+/// exactly one line per committed edit. Without the band, the ported
+/// `ensureVisible` held the camera frozen while typing past the content
+/// bottom (up to half a viewport of dead room) and then snapped it down by
+/// several lines at once — the on-device "viewport jumps / upper content is
+/// pushed out abruptly" glitch.
+const FOLLOW_BAND_FRACTION: f32 = 0.5;
 
 /// Per-second velocity decay multiplier for `fling`/`tick_fling`. New
 /// value, not ported — see the struct doc comment.
@@ -45,6 +63,7 @@ impl Default for ScrollState {
             max_scroll_y: 0.0,
             velocity_x: 0.0,
             velocity_y: 0.0,
+            follow_anchor_y: None,
         }
     }
 }
@@ -127,6 +146,68 @@ impl ScrollState {
         self.scroll_y = self.scroll_y.clamp(0.0, self.max_scroll_y);
 
         needs_scroll
+    }
+
+    /// Camera-follow for typed edits: keeps the caret's row pinned exactly
+    /// where it is on screen for as long as it works in the bottom *typing
+    /// band* (see `FOLLOW_BAND_FRACTION`), then falls back to the ordinary
+    /// margin behavior (`ensure_visible`, below) and the final clamp. This
+    /// is the smooth complement to `ensure_visible`: that one only acts once the
+    /// caret crosses an edge, so typing at the bottom froze the view and then
+    /// snapped it down by several lines at once. Here the camera translates
+    /// by the caret's own movement each edit (line-by-line on Enter, the
+    /// merged line's height on Backspace-merge), which removes both the snap
+    /// and the "deleted text reappears" lurch — `ensure_visible` on deletion
+    /// re-clamped the view down a line as the content height shrank.
+    ///
+    /// Deliberate divergence from the ported `ScrollManager`, requested on
+    /// device; the reason lives in `.project/PROGRESS.md`. Idempotent for a
+    /// given caret: repeating the call with unchanged inputs translates the
+    /// camera by zero. Returns whether scroll actually moved, and cancels an
+    /// in-flight fling when the follow does move (the old engine aborted its
+    /// `OverScroller` on camera corrections too).
+    pub fn follow_caret_after_edit(
+        &mut self,
+        caret_x: f32,
+        caret_y: f32,
+        line_height: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> bool {
+        let mut moved = false;
+
+        if let Some(anchor_y) = self.follow_anchor_y {
+            // The band test compares the previously-anchored caret against
+            // this call's scroll, so an intervening drag that moved the caret
+            // out of the band simply lets following lapse until typing brings
+            // it back.
+            let band_floor = viewport_height * FOLLOW_BAND_FRACTION;
+            if anchor_y + line_height - self.scroll_y >= band_floor {
+                let travel = caret_y - anchor_y;
+                if travel != 0.0 {
+                    self.scroll_y += travel;
+                    moved = true;
+                    // Camera corrections abort the whole fling, matching the
+                    // old engine aborting its OverScroller on them — zero
+                    // both axes, not just the one we moved.
+                    self.velocity_x = 0.0;
+                    self.velocity_y = 0.0;
+                }
+            }
+        }
+        self.follow_anchor_y = Some(caret_y);
+
+        // Every remaining edge (including horizontal) and the final clamp
+        // come from the original margin behavior.
+        moved |= self.ensure_visible(
+            caret_x,
+            caret_y,
+            line_height,
+            viewport_width,
+            viewport_height,
+        );
+
+        moved
     }
 
     /// Direct drag/pan input, in pixels, clamped to the bounds.
@@ -237,6 +318,84 @@ mod tests {
         let moved = s.ensure_visible(200.0, 400.0, 30.0, 400.0, 800.0);
         assert!(!moved);
         assert_eq!(s.scroll_y(), 0.0);
+    }
+
+    #[test]
+    fn follow_anchors_the_caret_row_in_the_bottom_band() {
+        let mut s = ScrollState::new();
+        s.update_bounds(1000.0, 20_000.0, 400.0, 800.0);
+        // Caret bottom (630) sits in the lower half of the empty viewport
+        // without forcing `ensure_visible` (which only acts past 750), so
+        // this call just seeds the anchor and does nothing.
+        let moved = s.follow_caret_after_edit(50.0, 600.0, 30.0, 400.0, 800.0);
+        assert!(!moved);
+        assert_eq!(s.scroll_y(), 0.0);
+        // Each Enter pushes the caret down a line and the camera follows by
+        // exactly one line height — line-by-line, never a snap.
+        let moved = s.follow_caret_after_edit(50.0, 630.0, 30.0, 400.0, 800.0);
+        assert!(moved);
+        assert_eq!(s.scroll_y(), 30.0);
+        let moved = s.follow_caret_after_edit(50.0, 660.0, 30.0, 400.0, 800.0);
+        assert!(moved);
+        assert_eq!(s.scroll_y(), 60.0);
+        assert_eq!(s.velocity_y, 0.0);
+    }
+
+    #[test]
+    fn follow_backspaces_merge_traverses_up_one_line_at_a_time() {
+        let mut s = ScrollState::new();
+        s.update_bounds(1000.0, 20_000.0, 400.0, 800.0);
+        // First call: caret at 800, `ensure_visible` scrolls 80 to keep it
+        // visible; the follow anchor is seeded at 800.
+        let moved = s.follow_caret_after_edit(50.0, 800.0, 30.0, 400.0, 800.0);
+        assert!(moved);
+        assert_eq!(s.scroll_y(), 80.0);
+        // Backspace merges a line, so the content shrinks (20_000 -> 800) in
+        // the same pass. The old camera re-clamped to the shorter content
+        // end on that shrink — the "deleted text reappears" lurch; the follow
+        // instead translates up by exactly the merged line's height.
+        s.update_bounds(1000.0, 800.0, 400.0, 800.0);
+        let moved = s.follow_caret_after_edit(50.0, 770.0, 30.0, 400.0, 800.0);
+        assert!(moved);
+        assert_eq!(s.scroll_y(), 50.0);
+    }
+
+    #[test]
+    fn follow_is_idempotent_for_an_unchanged_caret() {
+        let mut s = ScrollState::new();
+        s.update_bounds(1000.0, 20_000.0, 400.0, 800.0);
+        s.follow_caret_after_edit(50.0, 850.0, 30.0, 400.0, 800.0);
+        let scroll_y = s.scroll_y();
+        let moved = s.follow_caret_after_edit(50.0, 850.0, 30.0, 400.0, 800.0);
+        assert!(!moved);
+        assert_eq!(s.scroll_y(), scroll_y);
+    }
+
+    #[test]
+    fn follow_leaves_the_upper_screen_alone() {
+        let mut s = ScrollState::new();
+        s.update_bounds(1000.0, 20_000.0, 400.0, 800.0);
+        // Caret near the top: no follow (band requires the lower half) and no
+        // margin move.
+        let moved = s.follow_caret_after_edit(50.0, 300.0, 30.0, 400.0, 800.0);
+        assert!(!moved);
+        assert_eq!(s.scroll_y(), 0.0);
+        let moved = s.follow_caret_after_edit(50.0, 330.0, 30.0, 400.0, 800.0);
+        assert!(!moved);
+        assert_eq!(s.scroll_y(), 0.0);
+    }
+
+    #[test]
+    fn follow_clamps_to_the_content_bounds() {
+        let mut s = ScrollState::new();
+        // max_scroll_y = 1800 - 800 + 400 = 1400.
+        s.update_bounds(1000.0, 1800.0, 400.0, 800.0);
+        s.follow_caret_after_edit(50.0, 1600.0, 30.0, 400.0, 800.0);
+        // A big paste slams the caret 700px down; the camera must follow but
+        // never exceed the content-end bound.
+        let moved = s.follow_caret_after_edit(50.0, 2300.0, 30.0, 400.0, 800.0);
+        assert!(moved);
+        assert_eq!(s.scroll_y(), s.max_scroll_y);
     }
 
     #[test]

@@ -112,9 +112,9 @@ internal suspend fun PointerInputScope.awaitGestures(config: EditorGestureConfig
                     config.onScrollTick()
                 } else {
                     // One finger lifted: the pinch ends. The
-                    // composition-side ensure_visible effect keys on
-                    // `scaling` and settles the caret now. A still-down
-                    // finger is scale residue, not a tap.
+                    // composition-side camera pass keys on `scaling` and
+                    // settles the caret now. A still-down finger is scale
+                    // residue, not a tap.
                     config.setScaling(false)
                     suppressTap = true
                 }

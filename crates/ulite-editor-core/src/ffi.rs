@@ -245,6 +245,28 @@ impl EditorSession {
         )
     }
 
+    /// Camera-follow for typed edits: pins the caret row while it types in
+    /// the bottom band so each committed edit scrolls by exactly one line,
+    /// then falls back to the margin behavior. Returns whether scroll moved.
+    /// See `ScrollState::follow_caret_after_edit` for the tuning knob and
+    /// the divergence from the ported `ScrollManager`.
+    pub fn follow_caret_after_edit(
+        &self,
+        caret_x: f32,
+        caret_y: f32,
+        line_height: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> bool {
+        self.state().scroll.follow_caret_after_edit(
+            caret_x,
+            caret_y,
+            line_height,
+            viewport_width,
+            viewport_height,
+        )
+    }
+
     /// Raw one-finger pan in pixels, clamped to the bounds. Cancels an
     /// in-flight fling, like the old engine did on touch-down.
     pub fn scroll_by(&self, dx: f32, dy: f32) {
@@ -357,5 +379,15 @@ mod tests {
         session.backspace();
         assert_eq!(session.buffer_text(), "");
         assert_eq!(session.cursor(), CursorPosition { row: 0, column: 0 });
+    }
+
+    #[test]
+    fn follow_caret_after_edit_is_wired_through_to_the_camera() {
+        let session = EditorSession::new();
+        session.update_bounds(1000.0, 20_000.0, 400.0, 800.0);
+        assert!(!session.follow_caret_after_edit(50.0, 600.0, 30.0, 400.0, 800.0));
+        assert_eq!(session.scroll_y(), 0.0);
+        assert!(session.follow_caret_after_edit(50.0, 630.0, 30.0, 400.0, 800.0));
+        assert_eq!(session.scroll_y(), 30.0);
     }
 }

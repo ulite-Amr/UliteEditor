@@ -238,23 +238,6 @@ fun EditorComponent(
     val geometryState = remember { mutableStateOf<RebuiltEditorLayout?>(null) }
     geometryState.value = rebuilt
 
-    LaunchedEffect(rebuilt.contentWidthPx, rebuilt.contentHeightPx, wrapWidthPx, viewportHeightPx) {
-        session.updateBounds(
-            rebuilt.contentWidthPx,
-            rebuilt.contentHeightPx,
-            viewportWidthPx,
-            viewportHeightPx,
-        )
-        scrollTick++
-    }
-
-    // Read at composition so scroll frames (which only bump scrollTick)
-    // actually repaint the canvas: the canvas lambda is rebuilt whenever
-    // the keyed state changes, and reads session.scrollX/Y fresh on rebuild.
-    val scrollOffset = remember(scrollTick + contentTick) {
-        Offset(session.scrollX(), session.scrollY())
-    }
-
     // The caret is derived from this exact layout version (invariant 1):
     // same visual lines that draw the text, same line-height/margin px
     // that positioned them.
@@ -314,23 +297,86 @@ fun EditorComponent(
         null
     }
 
-    // ensure_visible must not fight the pinch's focus-anchored scroll while
-    // a scale is in flight; it settles only when the gesture ends.
-    LaunchedEffect(
-        steadyCaret.x,
-        steadyCaret.y,
-        composingCaretOffset?.x,
-        composingCaretOffset?.y,
+    // Camera corrections run during the same composition that reads them,
+    // keyed on everything they depend on (layout, caret, viewport, zoom).
+    // Doing this in composition — not in a LaunchedEffect — means the frame
+    // that draws the new layout already carries the corrected camera; the
+    // old effects corrected a frame late, leaving one stale-scroll frame of
+    // mis-rendered content (the flicker "the view jumps around while
+    // typing"). The caret-follow call on typed edits (`contentTick` moved)
+    // pins the caret row so the view slides smoothly one line per keystroke;
+    // the plain margin behavior handles taps and resize.
+    //
+    // updateBounds also runs while scaling: the pinch's focus-anchored
+    // setScroll needs current bounds even mid-gesture. The follow/ensure
+    // passes settle only when the gesture ends (`scaling` key, same as the
+    // old effect), because they must not fight the finger.
+    //
+    // scrollTick is bumped here rather than keyed to avoid a camera↔content
+    // feedback loop: the block re-runs on a layout/caret change, moves the
+    // camera, and the tick only triggers a redraw. This only works because
+    // `scrollOffset` is remembered BELOW this block on (scrollTick +
+    // contentTick): the canvas frame of this recomposition already reads the
+    // corrected camera — do not move it above.
+    val lastEditTick = remember { intArrayOf(contentTick) }
+    val caretAnchor = composingCaretOffset ?: steadyCaret
+    remember(
+        contentTick,
+        caretAnchor.x,
+        caretAnchor.y,
         lineHeightPx,
         viewportWidthPx,
         viewportHeightPx,
+        rebuilt.contentWidthPx,
+        rebuilt.contentHeightPx,
         scaling,
     ) {
-        if (scaling) return@LaunchedEffect
-        val anchor = composingCaretOffset ?: steadyCaret
-        if (session.ensureVisible(anchor.x, anchor.y, lineHeightPx, viewportWidthPx, viewportHeightPx)) {
-            scrollTick++
+        // `updateBounds` re-clamps into the new bounds (e.g. the keyboard
+        // closing grows the viewport and shrinks max_scroll_y) and reports
+        // nothing, so a moved-from-clamp camera has to be detected here —
+        // otherwise the keyed scrollOffset below would go on drawing the
+        // stale pre-clamp offset until the next edit.
+        val scrollXBefore = session.scrollX()
+        val scrollYBefore = session.scrollY()
+        session.updateBounds(
+            rebuilt.contentWidthPx,
+            rebuilt.contentHeightPx,
+            viewportWidthPx,
+            viewportHeightPx,
+        )
+        val boundsMoved =
+            session.scrollX() != scrollXBefore || session.scrollY() != scrollYBefore
+        if (!scaling) {
+            val didMove = if (contentTick != lastEditTick[0]) {
+                lastEditTick[0] = contentTick
+                session.followCaretAfterEdit(
+                    caretAnchor.x,
+                    caretAnchor.y,
+                    lineHeightPx,
+                    viewportWidthPx,
+                    viewportHeightPx,
+                )
+            } else {
+                session.ensureVisible(
+                    caretAnchor.x,
+                    caretAnchor.y,
+                    lineHeightPx,
+                    viewportWidthPx,
+                    viewportHeightPx,
+                )
+            }
+            if (didMove || boundsMoved) scrollTick++
         }
+        // The keyed body's only job is running the correction pass; lint
+        // forbids remember returning Unit, and no state belongs here.
+        true
+    }
+
+    // Read at composition so scroll frames (which only bump scrollTick)
+    // actually repaint the canvas: the canvas lambda is rebuilt whenever
+    // the keyed state changes, and reads session.scrollX/Y fresh on rebuild.
+    val scrollOffset = remember(scrollTick + contentTick) {
+        Offset(session.scrollX(), session.scrollY())
     }
 
     // The caret tween snaps instantly during a pinch (sora skips caret
