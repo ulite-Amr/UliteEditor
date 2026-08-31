@@ -308,24 +308,28 @@ internal class EditorImeConnection(
             }
         }
 
-    @RequiresApi(Build.VERSION_CODES.N_MR1)
     override fun getSurroundingText(
         beforeLength: Int,
         afterLength: Int,
         flags: Int,
     ): SurroundingText? =
-        synchronized(lock) {
-            val limit = 192
-            val before = beforeLength.coerceAtMost(limit)
-            val after = afterLength.coerceAtMost(limit)
-            val windowStart = (mirrorCaret - before).coerceAtLeast(0)
-            val windowEnd = (mirrorCaret + after).coerceAtMost(mirror.length)
-            SurroundingText(
-                mirror.substring(windowStart, windowEnd),
-                mirrorCaret - windowStart,
-                mirrorCaret - windowStart,
-                windowStart,
-            )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            synchronized(lock) {
+                val limit = 192
+                val before = beforeLength.coerceAtMost(limit)
+                val after = afterLength.coerceAtMost(limit)
+                val windowStart = (mirrorCaret - before).coerceAtLeast(0)
+                val windowEnd = (mirrorCaret + after).coerceAtMost(mirror.length)
+                SurroundingText(
+                    mirror.substring(windowStart, windowEnd),
+                    mirrorCaret - windowStart,
+                    mirrorCaret - windowStart,
+                    windowStart,
+                )
+            }
+        } else {
+            // SurroundingText is API 31; older runtimes get null (allowed).
+            null
         }
 
     // ------------------------------------------------------------------
@@ -412,7 +416,7 @@ internal class EditorImeConnection(
         return true
     }
 
-    @RequiresApi(Build.VERSION_CODES.N_MR1)
+    @RequiresApi(Build.VERSION_CODES.Q)
     override fun deleteSurroundingTextInCodePoints(beforeLength: Int, afterLength: Int): Boolean {
         mainHandler.post {
             synchronized(lock) {
