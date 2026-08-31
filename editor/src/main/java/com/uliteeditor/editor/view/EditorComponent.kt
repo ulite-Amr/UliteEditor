@@ -355,6 +355,9 @@ fun EditorComponent(
             }
             if (didMove) scrollTick++
         }
+        // The keyed body's only job is running the correction pass; lint
+        // forbids remember returning Unit, and no state belongs here.
+        true
     }
 
     // Read at composition so scroll frames (which only bump scrollTick)

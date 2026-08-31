@@ -151,8 +151,8 @@ impl ScrollState {
     /// Camera-follow for typed edits: keeps the caret's row pinned exactly
     /// where it is on screen for as long as it works in the bottom *typing
     /// band* (see `FOLLOW_BAND_FRACTION`), then falls back to the ordinary
-    /// margin behavior ([`ensure_visible`]) and the final clamp. This is the
-    /// smooth complement to `ensure_visible`: that one only acts once the
+    /// margin behavior (`ensure_visible`, below) and the final clamp. This
+    /// is the smooth complement to `ensure_visible`: that one only acts once the
     /// caret crosses an edge, so typing at the bottom froze the view and then
     /// snapped it down by several lines at once. Here the camera translates
     /// by the caret's own movement each edit (line-by-line on Enter, the
@@ -195,8 +195,13 @@ impl ScrollState {
 
         // Every remaining edge (including horizontal) and the final clamp
         // come from the original margin behavior.
-        moved |=
-            self.ensure_visible(caret_x, caret_y, line_height, viewport_width, viewport_height);
+        moved |= self.ensure_visible(
+            caret_x,
+            caret_y,
+            line_height,
+            viewport_width,
+            viewport_height,
+        );
 
         moved
     }
