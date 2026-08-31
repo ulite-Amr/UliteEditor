@@ -262,7 +262,11 @@ internal class EditorImeConnection(
 
     override fun getHandler(): Handler = mainHandler
 
-    override fun getEditable(): Editable? = null
+    // getEditable is no longer declared on InputConnection starting compileSdk
+    // 37, so it cannot be an override here; it is kept as a plain method so
+    // older runtimes, whose interface still declares it, get an explicit null
+    // instead of an AbstractMethodError.
+    fun getEditable(): Editable? = null
 
     /** This editor owns a full mirror of the text; content commits are never used. */
     override fun commitContent(inputContentInfo: InputContentInfo, flags: Int, opts: Bundle?): Boolean = false
