@@ -191,8 +191,11 @@ internal data class EditorImeNodeElement(
 
 /**
  * Attaches the editor's Compose-native IME node (see [EditorImeNode]). The
- * caller must also apply `focusRequester`/`focusTarget` on the same element so
- * focus events reach the node.
+ * caller must apply `focusTarget` on the same element and it must come AFTER
+ * this modifier in the chain: `EditorImeNode` is a [FocusEventModifierNode]
+ * and only observes focus targets in its own subtree, so placing its focus
+ * node above this one would leave it blind (no focus events, no session, no
+ * keyboard). `focusRequester` may come before or after.
  */
 internal fun Modifier.editorIme(
     session: EditorSession,

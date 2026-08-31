@@ -411,8 +411,12 @@ fun EditorComponent(
                 // a text input session with a custom InputConnection (no hidden
                 // View/EditText — see the `ime` package). `editing` is set from
                 // the node's own focus events.
+                //
+                // Ordering matters: `editorIme` must sit ABOVE `focusTarget` so
+                // its FocusEventModifierNode can observe the focus target in its
+                // subtree — placed after it, the node never sees focus and the
+                // session (and the soft keyboard) never opens.
                 .focusRequester(focusRequester)
-                .focusTarget()
                 .editorIme(
                     session = session,
                     handle = imeHandle,
@@ -420,7 +424,8 @@ fun EditorComponent(
                     onEdited = onImeEdited,
                     onImeCaretMoved = onImeCaretMoved,
                     onFocusChanged = onImeFocusChanged,
-                ),
+                )
+                .focusTarget(),
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 drawEditorContent(
