@@ -56,4 +56,19 @@ class TextIndexTest {
         assertEquals(6, TextIndex.utf8Length("مرحبا".substring(0, 3)))
         assertEquals(4, TextIndex.utf8Length("\uD83D\uDE00"))
     }
+
+    @Test
+    fun byteOffsetFromRowColumnInvertsRowColumnAtByteOffset() {
+        // Direct inverse of the fixture pairs in rowColumnDerivedFromByteOffsetAcrossNewlines.
+        assertEquals(2, TextIndex.byteOffsetAtRowCol("ab\ncd", 0, 2))
+        assertEquals(4, TextIndex.byteOffsetAtRowCol("ab\ncd", 1, 1))
+        assertEquals(5, TextIndex.byteOffsetAtRowCol("ab\ncd", 1, 2))
+        // Arabic is 2 UTF-8 bytes per letter: byte columns, not code points.
+        assertEquals(4, TextIndex.byteOffsetAtRowCol("مف\n", 0, 4))
+        assertEquals(5, TextIndex.byteOffsetAtRowCol("مف\n", 1, 0))
+        // A column past the row's end clamps to the row's byte length; a row
+        // past the last clamps to the buffer end (engine cursor semantics).
+        assertEquals(2, TextIndex.byteOffsetAtRowCol("ab", 0, 99))
+        assertEquals(5, TextIndex.byteOffsetAtRowCol("ab\ncd", 99, 0))
+    }
 }

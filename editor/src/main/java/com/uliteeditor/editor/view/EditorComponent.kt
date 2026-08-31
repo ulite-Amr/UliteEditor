@@ -11,8 +11,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -25,29 +23,22 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameMillis
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.InterceptPlatformTextInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextMeasurer
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextMotion
 import androidx.compose.ui.unit.IntSize
@@ -57,8 +48,8 @@ import com.uliteeditor.editor.EditorDimensions
 import com.uliteeditor.editor.bidi.TextIndex
 import com.uliteeditor.editor.effects.runFlingLoop
 import com.uliteeditor.editor.effects.runMetricsLoop
-import com.uliteeditor.editor.ime.applyImeEdit
-import com.uliteeditor.editor.ime.createNoSuggestionsInterceptor
+import com.uliteeditor.editor.ime.ImeHandle
+import com.uliteeditor.editor.ime.editorIme
 import com.uliteeditor.editor.input.EditorGestureConfig
 import com.uliteeditor.editor.input.awaitGestures
 import com.uliteeditor.editor.layout.CaretSpot
@@ -66,7 +57,6 @@ import com.uliteeditor.editor.layout.RebuiltEditorLayout
 import com.uliteeditor.editor.layout.buildEditorLayout
 import com.uliteeditor.editor.layout.caretTopIn
 import com.uliteeditor.editor.layout.caretXIn
-import com.uliteeditor.editor.layout.composingTextOf
 import com.uliteeditor.editor.layout.measureComposingLayout
 import com.uliteeditor.editor.layout.steadyCaretSpot
 import com.uliteeditor.editor.metrics.EditorMetrics
@@ -89,8 +79,10 @@ import uniffi.ulite_editor_core.EditorSession
  *
  * This is a library component, not a screen: it takes a plain [modifier] so
  * any host (activity, split pane, preview) can embed it. Input comes from
- * the *system* keyboard through an invisible [BasicTextField] bound to the
- * engine buffer — there is no built-in on-screen keyboard.
+ * the *system* keyboard through a Compose-native text input session
+ * (`editorIme` — a focusable modifier wrapping a custom `InputConnection`
+ * with no hidden View/EditText underneath — see the `ime` package), so there
+ * is no built-in on-screen keyboard.
  *
  * Three invariants hold the component together:
  * - The caret is always *derived* from the same laid-out row layouts
@@ -100,9 +92,9 @@ import uniffi.ulite_editor_core.EditorSession
  *   where text is inserted.
  * - Scroll input follows the finger: drag/fling deltas are negated before
  *   reaching the core camera, matching Android/sora-editor conventions.
- * - The engine buffer is the single source of truth; the IME field is just
- *   a pipe that gets a fresh authoritative TextFieldValue every edit
- *   (the real InputConnection-backed editor is a follow-up, see PROGRESS).
+ * - The engine buffer is the single source of truth; the input connection is
+ *   a thin pipe that applies committed edits to the engine and reports live
+ *   composing text back for the on-canvas preview (see PROGRESS).
  *
  * [settings] is the host's view of editor preferences; pass an owned
  * instance to keep the toggles (word wrap) shared with the app's UI.
@@ -129,59 +121,40 @@ fun EditorComponent(
     var scaling by remember { mutableStateOf(false) }
     var fontSizeSp by remember { mutableFloatStateOf(EditorDimensions.FONT_SIZE_SP.toFloat()) }
 
-    var imeField by remember { mutableStateOf(TextFieldValue(session.bufferText())) }
     val interactionScope = rememberCoroutineScope()
     val blink = remember { CaretBlink(interactionScope) }
 
-    // The invisible pipe must not sit under whole-word composition: autocorrect
-    // / suggestion IMEs hold a word in the composing span until a release, and
-    // the engine only sees committed text. The interceptor is remember-stable:
-    // passing a fresh instance while a session is live tears it down and
-    // restarts the keyboard every recomposition.
-    val noSuggestionsInterceptor = remember { createNoSuggestionsInterceptor() }
+    // IME pipe state (see the `ime` package): `composingState` is the live
+    // composing text the connection reports for the on-canvas preview (null
+    // when nothing is composed), and `imeSelectionTick` is bumped on
+    // caret-only IME moves. `session.cursor()` returns equal-by-value objects,
+    // so a caret move without a text change must have a tick of its own to
+    // recompose the caret key (see steadyCaret below).
+    var composingState by remember { mutableStateOf<String?>(null) }
+    var imeSelectionTick by remember { mutableIntStateOf(0) }
+    val imeHandle = remember { ImeHandle() }
 
-    fun syncImeField() {
-        // While the IME is composing (suggestions / autocorrect / multi-tap),
-        // its text lives only in the field, not in the engine buffer:
-        // rewriting the field cancels composing and resets the keyboard — the
-        // suggestion strip flickers and a symbols/emojis layout snaps back to
-        // letters. Leave the field alone until the IME commits (onValueChange
-        // where composition is null; the IME's composing text then lands as a
-        // single edit in the engine).
-        if (imeField.composition != null) return
-        // The field can briefly hold text that never reached the engine (a
-        // composing span the IME ended without a commit callback, or a race
-        // between the final onValueChange and focus loss). Landing it before
-        // overwriting makes text-loss impossible on every sync path; once
-        // flushed, field and buffer are equal and this no-ops, so the extra
-        // contentTick++ converges instead of looping.
-        if (imeField.text != session.bufferText() && applyImeEdit(session, imeField.text)) {
-            contentTick++
+    val onImeComposingChanged: (String?) -> Unit = { composingState = it }
+    val onImeEdited: () -> Unit = {
+        contentTick++
+        blink.reset()
+    }
+    val onImeCaretMoved: () -> Unit = { imeSelectionTick++ }
+    val onImeFocusChanged: (Boolean) -> Unit = { focused ->
+        // CursorManager.setFocused: the caret hides the instant focus leaves
+        // and settles solid on return; a leftover composing preview clears.
+        if (focused) {
             blink.reset()
+        } else {
+            blink.hide()
+            composingState = null
         }
-        val current = session.bufferText()
-        val selection = TextRange(
-            TextIndex.utf16IndexAtByteOffset(
-                current,
-                TextIndex.absoluteByteOffsetOfCursor(session),
-            ),
-        )
-        val next = TextFieldValue(current, selection = selection)
-        // Skip identical rewrites: setting the value again resets the IME's
-        // composing/suggestion state, which reads as flicker while typing.
-        if (imeField != next) imeField = next
+        editing = focused
     }
 
     LaunchedEffect(session) {
         focusRequester.requestFocus()
         blink.reset()
-    }
-
-    // Every engine edit re-syncs the invisible field to the authoritative
-    // buffer (invariant 3); the callback path already syncs immediately, so
-    // this also covers edits that did not start at the keyboard.
-    LaunchedEffect(contentTick) {
-        if (contentTick > 0) syncImeField()
     }
 
     val density = LocalDensity.current
@@ -242,23 +215,25 @@ fun EditorComponent(
     // same visual lines that draw the text, same line-height/margin px
     // that positioned them.
     val cursor = session.cursor()
-    // Taps move the caret without touching the buffer; the invisible IME
-    // field must learn the new selection or the next keystroke edits at the
+    // Taps move the caret without touching the buffer; the IME connection's
+    // mirror must learn the new selection or the next keystroke edits at the
     // stale spot (the "caret jumps back to where it last edited" symptom).
-    // The no-op skip in syncImeField keeps an already-correct field from
-    // being rewritten mid-edit.
     LaunchedEffect(cursor) {
-        syncImeField()
+        imeHandle.syncSelectionFromEngine()
     }
-    val steadyCaret = remember(rebuilt, cursor, leftMarginPx) {
+    // `imeSelectionTick` is redundant for text edits (contentTick already
+    // moved) but required for caret-only moves: `cursor` is equal-by-value,
+    // so without the tick the steadyCaret `remember` would not recompose.
+    val steadyCaret = remember(rebuilt, cursor, imeSelectionTick, leftMarginPx) {
         steadyCaretSpot(rebuilt, cursor, leftMarginPx)
     }
 
     // While the IME holds text in composition (autocorrect / suggestions /
     // multi-tap), re-render the caret's row with the composing text inserted
-    // at the caret, tinted to mark it unreleased (see composingTextOf).
+    // at the caret, tinted to mark it unreleased. The connection reports the
+    // composing text (null when nothing is composed) via [onImeComposingChanged].
     val composingColor = MaterialTheme.colorScheme.primary.copy(alpha = EditorDimensions.COMPOSING_ALPHA)
-    val composingText = remember(imeField) { composingTextOf(imeField) }
+    val composingText = composingState
     val caretRow = session.cursor().row.toInt()
     val caretRowText = session.lineText(caretRow.toULong())
     val caretRowUtf16 = TextIndex.utf16IndexAtByteOffset(caretRowText, session.cursor().column.toLong())
@@ -400,6 +375,7 @@ fun EditorComponent(
         onScrollTick = { scrollTick++ },
         onTap = { row, column ->
             session.setCursor(CursorPosition(row, column))
+            imeHandle.syncSelectionFromEngine()
             blink.reset()
         },
         onFocusRequest = { focusRequester.requestFocus() },
@@ -430,7 +406,21 @@ fun EditorComponent(
                 .onSizeChanged { editorSize = it }
                 .pointerInput(session) {
                     awaitGestures(editorGestureConfig)
-                },
+                }
+                // The Compose-native IME surface: a focusable node that opens
+                // a text input session with a custom InputConnection (no hidden
+                // View/EditText — see the `ime` package). `editing` is set from
+                // the node's own focus events.
+                .focusRequester(focusRequester)
+                .focusTarget()
+                .editorIme(
+                    session = session,
+                    handle = imeHandle,
+                    onComposingChanged = onImeComposingChanged,
+                    onEdited = onImeEdited,
+                    onImeCaretMoved = onImeCaretMoved,
+                    onFocusChanged = onImeFocusChanged,
+                ),
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 drawEditorContent(
@@ -450,72 +440,6 @@ fun EditorComponent(
                         leftMarginPx = leftMarginPx,
                     ),
                 )
-            }
-
-            // Invisible IME pipe: one 1 dp field whose text is always
-            // snap-synced to the engine buffer (invariant 3). Programmatic
-            // writes do not fire onValueChange, so there are no feedback
-            // loops. The input session below passes through the
-            // no-suggestions interceptor (see `noSuggestionsInterceptor`).
-            InterceptPlatformTextInput(
-                interceptor = noSuggestionsInterceptor,
-            ) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .size(1.dp),
-                ) {
-                    BasicTextField(
-                        value = imeField,
-                        onValueChange = { newValue ->
-                            // Mirror the IME's authoritative view (text +
-                            // composing range) exactly — writing
-                            // composition = null here would force-commit the
-                            // active composition and reset the keyboard
-                            // (suggestion strip / layout). Real-time typing
-                            // then comes from committing only what the IME
-                            // released.
-                            imeField = newValue
-                            val composed = newValue.composition
-                            val committedText = if (composed != null) {
-                                // The engine sees everything outside the live
-                                // composing span, so each new keystroke lands
-                                // immediately; the composed segment commits
-                                // as one edit the moment the IME releases it
-                                // (composition == null).
-                                newValue.text.removeRange(composed.min until composed.max)
-                            } else {
-                                newValue.text
-                            }
-                            if (applyImeEdit(session, committedText)) {
-                                contentTick++
-                                blink.reset()
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .focusRequester(focusRequester)
-                            .onFocusChanged {
-                                if (!it.isFocused && imeField.composition != null) {
-                                    // Clearing focus makes the platform cancel
-                                    // the active composition, which would
-                                    // silently drop the word mid-typing. Land
-                                    // it in the engine first.
-                                    if (applyImeEdit(session, imeField.text)) {
-                                        contentTick++
-                                        blink.reset()
-                                    }
-                                }
-                                // CursorManager.setFocused: the caret hides the
-                                // instant focus leaves and settles solid on
-                                // return.
-                                if (it.isFocused) blink.reset() else blink.hide()
-                                editing = it.isFocused
-                            },
-                        textStyle = TextStyle(color = Color.Transparent, fontSize = 16.sp),
-                        cursorBrush = SolidColor(Color.Transparent),
-                    )
-                }
             }
         }
     }

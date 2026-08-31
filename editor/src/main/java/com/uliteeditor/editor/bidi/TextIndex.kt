@@ -95,6 +95,33 @@ internal object TextIndex {
         return bytes
     }
 
+    /**
+     * The byte offset of the cell (row, column) in [text] — the inverse of
+     * [rowColAtByteOffset]: walks [row] whole lines, then adds the UTF-8 byte
+     * length of [col] leading code points of that row. Columns are UTF-8 byte
+     * columns (the engine caret order), so bytes thread through unchanged; a
+     * column past the row's end clamps to the row length and a row past the
+     * last clamps to the buffer end, mirroring the engine's cursor clamp.
+     */
+    fun byteOffsetAtRowCol(text: String, row: Int, col: Int): Int {
+        var bytes = 0L
+        var index = 0
+        var currentRow = 0
+        while (currentRow < row && index < text.length) {
+            val codePoint = text.codePointAt(index)
+            index += Character.charCount(codePoint)
+            bytes += utf8LengthOfCodePoint(codePoint)
+            if (codePoint == '\n'.code) currentRow++
+        }
+        var rowBytes = 0L
+        var probe = index
+        while (probe < text.length && text.codePointAt(probe) != '\n'.code) {
+            rowBytes += utf8LengthOfCodePoint(text.codePointAt(probe))
+            probe += Character.charCount(text.codePointAt(probe))
+        }
+        return (bytes + col.coerceIn(0, rowBytes.toInt())).toInt()
+    }
+
     /** UTF-16 character index of byte offset [byteOffset] in [buffer]. */
     fun utf16IndexAtByteOffset(buffer: String, byteOffset: Long): Int {
         var bytes = 0L

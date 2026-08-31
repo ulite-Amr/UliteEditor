@@ -1,10 +1,5 @@
 package com.uliteeditor.editor.ime
 
-import android.text.InputType
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputConnection
-import androidx.compose.ui.platform.PlatformTextInputInterceptor
-import androidx.compose.ui.platform.PlatformTextInputMethodRequest
 import com.uliteeditor.editor.bidi.TextIndex
 import uniffi.ulite_editor_core.CursorPosition
 import uniffi.ulite_editor_core.EditorSession
@@ -18,8 +13,9 @@ import uniffi.ulite_editor_core.EditorSession
  * combining sequences stay intact; edits that cross a line boundary fall back
  * to a wholesale replaceContent.
  *
- * This is the sample-level pipe (single keystroke fidelity until the engine
- * exposes a proper InputConnection — see PROGRESS.md).
+ * The engine buffer is the single source of truth; the Compose-side
+ * [EditorImeConnection] feeds it the mirror text (engine text minus any live
+ * composing span) through this function on every committed edit.
  */
 internal fun applyImeEdit(session: EditorSession, newText: String): Boolean {
     val oldText = session.bufferText()
@@ -65,26 +61,3 @@ internal fun applyImeEdit(session: EditorSession, newText: String): Boolean {
     }
     return true
 }
-
-/**
- * A remember-stable no-suggestions input interceptor. The invisible pipe must
- * not sit under whole-word composition: autocorrect / suggestion IMEs hold a
- * word in the composing span until a release, and the engine only sees
- * committed text. Ask for a plain-text input by tagging the EditorInfo with
- * TYPE_TEXT_FLAG_NO_SUGGESTIONS — KeyboardOptions.autoCorrect is ignored by
- * most IMEs for KeyboardType.Text. The interceptor must be remember-stable:
- * passing a fresh instance while a session is live tears it down and restarts
- * the keyboard every recomposition.
- */
-internal fun createNoSuggestionsInterceptor(): PlatformTextInputInterceptor =
-    PlatformTextInputInterceptor { request, nextHandler ->
-        val modifiedRequest = object : PlatformTextInputMethodRequest {
-            override fun createInputConnection(outAttributes: EditorInfo): InputConnection {
-                val connection = request.createInputConnection(outAttributes)
-                outAttributes.inputType =
-                    outAttributes.inputType or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
-                return connection
-            }
-        }
-        nextHandler.startInputMethod(modifiedRequest)
-    }
