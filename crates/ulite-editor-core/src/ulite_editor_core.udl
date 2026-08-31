@@ -38,6 +38,7 @@ interface EditorSession {
   f32 scroll_y();
   void update_bounds(f32 content_width, f32 content_height, f32 viewport_width, f32 viewport_height);
   boolean ensure_visible(f32 cursor_x, f32 cursor_y, f32 line_height, f32 viewport_width, f32 viewport_height);
+  boolean follow_caret_after_edit(f32 caret_x, f32 caret_y, f32 line_height, f32 viewport_width, f32 viewport_height);
   void scroll_by(f32 dx, f32 dy);
   void set_scroll(f32 x, f32 y);
   void start_fling(f32 velocity_x, f32 velocity_y);
