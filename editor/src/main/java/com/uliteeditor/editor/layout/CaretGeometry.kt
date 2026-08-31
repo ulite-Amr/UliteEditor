@@ -11,26 +11,37 @@ internal data class CaretSpot(val x: Float, val y: Float)
 /**
  * X, in content space, of the caret at UTF-16 [utf16] inside [layout].
  * `getCursorRect` is bidi-aware and valid at offset == end-of-line (unlike
- * getBoundingBox). RTL runs are measured from the line's right edge, so the
- * x must be mirrored exactly the way the platform's own field does it
+ * getBoundingBox): it returns `layout.getPrimaryHorizontal(offset)`. When a
+ * run is right-flushed (a trailing RTL run, or an RTL line), those
+ * coordinates are measured from the run's right edge, so the x must be
+ * mirrored the way the platform field does it
  * (`layoutWidth - caretRect.right`, cf. androidx
  * `TextFieldCoreModifier.getCursorRectInScroller`) — without the mirror, an
  * Arabic run leaves its caret back on the English/left side.
  *
  * The mirror is decided per *run* (`getBidiRunDirection`), not per paragraph
- * (`getParagraphDirection`). A line whose base direction is LTR (it starts
- * with a strong LTR letter) but that has Arabic text typed in it still
- * places its caret on the right while editing that Arabic run — the
- * platform-edit-text behavior. The paragraph-level check put every caret on
- * the left of such a line even while typing Arabic (the on-device
- * misalignment): paragraph direction only governs base alignment, not the
- * caret of a mirror-embedded run. A neutral offset resolves as the run's
- * direction; an empty line has no run and stays LTR (caret on the left),
- * matching a platform field before any text is typed.
+ * (`getParagraphDirection`), and the run is looked up one offset before the
+ * caret (`max(utf16 - 1, 0)`): `getBidiRunDirection` resolves the run that
+ * *contains* the offset, and at a run's boundary or the end of a line it
+ * falls through to LTR (AOSP `Layout.isRtlCharAt`). The caret sits exactly
+ * on such a boundary while typing forward, so probing the caret offset
+ * itself would always pick the left branch there; stepping back picks the
+ * run the caret actually edits, the same trick the platform's selection
+ * handles use. On an empty or leading position the probe is offset 0,
+ * which has no run and stays LTR (caret on the left), matching a blank
+ * platform field.
+ *
+ * This is the deliberate divergence chosen for the mixed-line follow-up
+ * (English paragraph with Arabic typed into it → right-side Arabic caret);
+ * a mid-line RTL run that is *not* trailing keeps an absolute glyph
+ * position, and the mirror for such a spot is an approximation of the
+ * right-edge convention, not a bug.
  */
 internal fun caretXIn(layout: TextLayoutResult, utf16: Int, leftMarginPx: Float): Float {
     val caretRect = layout.getCursorRect(utf16)
-    return when (layout.getBidiRunDirection(utf16)) {
+    // The character immediately before the caret — see the KDoc above.
+    val caretRun = layout.getBidiRunDirection((utf16 - 1).coerceAtLeast(0))
+    return when (caretRun) {
         ResolvedTextDirection.Rtl -> layout.size.width - caretRect.right + leftMarginPx
         ResolvedTextDirection.Ltr -> leftMarginPx + caretRect.left
     }

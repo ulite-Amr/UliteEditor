@@ -314,7 +314,10 @@ fun EditorComponent(
     //
     // scrollTick is bumped here rather than keyed to avoid a camera↔content
     // feedback loop: the block re-runs on a layout/caret change, moves the
-    // camera, and the tick only triggers a redraw.
+    // camera, and the tick only triggers a redraw. This only works because
+    // `scrollOffset` is remembered BELOW this block on (scrollTick +
+    // contentTick): the canvas frame of this recomposition already reads the
+    // corrected camera — do not move it above.
     val lastEditTick = remember { intArrayOf(contentTick) }
     val caretAnchor = composingCaretOffset ?: steadyCaret
     remember(
@@ -328,12 +331,21 @@ fun EditorComponent(
         rebuilt.contentHeightPx,
         scaling,
     ) {
+        // `updateBounds` re-clamps into the new bounds (e.g. the keyboard
+        // closing grows the viewport and shrinks max_scroll_y) and reports
+        // nothing, so a moved-from-clamp camera has to be detected here —
+        // otherwise the keyed scrollOffset below would go on drawing the
+        // stale pre-clamp offset until the next edit.
+        val scrollXBefore = session.scrollX()
+        val scrollYBefore = session.scrollY()
         session.updateBounds(
             rebuilt.contentWidthPx,
             rebuilt.contentHeightPx,
             viewportWidthPx,
             viewportHeightPx,
         )
+        val boundsMoved =
+            session.scrollX() != scrollXBefore || session.scrollY() != scrollYBefore
         if (!scaling) {
             val didMove = if (contentTick != lastEditTick[0]) {
                 lastEditTick[0] = contentTick
@@ -353,7 +365,7 @@ fun EditorComponent(
                     viewportHeightPx,
                 )
             }
-            if (didMove) scrollTick++
+            if (didMove || boundsMoved) scrollTick++
         }
         // The keyed body's only job is running the correction pass; lint
         // forbids remember returning Unit, and no state belongs here.

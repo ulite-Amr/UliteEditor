@@ -163,7 +163,7 @@ impl ScrollState {
     /// Deliberate divergence from the ported `ScrollManager`, requested on
     /// device; the reason lives in `.project/PROGRESS.md`. Idempotent for a
     /// given caret: repeating the call with unchanged inputs translates the
-    /// camera by zero. Returns whether scroll actually moved, and stops an
+    /// camera by zero. Returns whether scroll actually moved, and cancels an
     /// in-flight fling when the follow does move (the old engine aborted its
     /// `OverScroller` on camera corrections too).
     pub fn follow_caret_after_edit(
@@ -187,6 +187,10 @@ impl ScrollState {
                 if travel != 0.0 {
                     self.scroll_y += travel;
                     moved = true;
+                    // Camera corrections abort the whole fling, matching the
+                    // old engine aborting its OverScroller on them — zero
+                    // both axes, not just the one we moved.
+                    self.velocity_x = 0.0;
                     self.velocity_y = 0.0;
                 }
             }
@@ -346,9 +350,11 @@ mod tests {
         let moved = s.follow_caret_after_edit(50.0, 800.0, 30.0, 400.0, 800.0);
         assert!(moved);
         assert_eq!(s.scroll_y(), 80.0);
-        // Merging on Backspace pulls the caret up a full line height; the
-        // camera translates up by exactly that, instead of re-clamping to the
-        // now-shorter content end (the old "deleted text reappears" lurch).
+        // Backspace merges a line, so the content shrinks (20_000 -> 800) in
+        // the same pass. The old camera re-clamped to the shorter content
+        // end on that shrink — the "deleted text reappears" lurch; the follow
+        // instead translates up by exactly the merged line's height.
+        s.update_bounds(1000.0, 800.0, 400.0, 800.0);
         let moved = s.follow_caret_after_edit(50.0, 770.0, 30.0, 400.0, 800.0);
         assert!(moved);
         assert_eq!(s.scroll_y(), 50.0);

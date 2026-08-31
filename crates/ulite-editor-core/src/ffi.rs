@@ -385,7 +385,7 @@ mod tests {
     fn follow_caret_after_edit_is_wired_through_to_the_camera() {
         let session = EditorSession::new();
         session.update_bounds(1000.0, 20_000.0, 400.0, 800.0);
-        session.follow_caret_after_edit(50.0, 600.0, 30.0, 400.0, 800.0);
+        assert!(!session.follow_caret_after_edit(50.0, 600.0, 30.0, 400.0, 800.0));
         assert_eq!(session.scroll_y(), 0.0);
         assert!(session.follow_caret_after_edit(50.0, 630.0, 30.0, 400.0, 800.0));
         assert_eq!(session.scroll_y(), 30.0);
