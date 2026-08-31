@@ -13,6 +13,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.ExtractedText
 import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputContentInfo
 import android.view.inputmethod.SurroundingText
 import androidx.annotation.RequiresApi
 import androidx.compose.ui.Modifier
@@ -80,18 +81,18 @@ internal class ImeHandle {
  * or the node is detached.
  */
 internal class EditorImeNode(
-    private var session: EditorSession,
-    private var onComposingChanged: (String?) -> Unit,
-    private var onEdited: () -> Unit,
-    private var onImeCaretMoved: () -> Unit,
-    private var onFocusChanged: (Boolean) -> Unit,
-    private var handle: ImeHandle?,
+    var session: EditorSession,
+    var onComposingChanged: (String?) -> Unit,
+    var onEdited: () -> Unit,
+    var onImeCaretMoved: () -> Unit,
+    var onFocusChanged: (Boolean) -> Unit,
+    var handle: ImeHandle?,
 ) : Modifier.Node(), PlatformTextInputModifierNode, FocusEventModifierNode {
 
     private var sessionJob: Job? = null
 
     /** The live connection, so [syncSelectionFromEngine] can reach it. */
-    private var activeConnection: EditorImeConnection? = null
+    var activeConnection: EditorImeConnection? = null
 
     override fun onFocusEvent(focusState: FocusState) {
         sessionJob?.cancel()
@@ -149,7 +150,7 @@ internal class EditorImeNode(
  * [ModifierNodeElement] that creates and updates the [EditorImeNode] across
  * recompositions, keeping [handle] pointed at the live node.
  */
-internal class EditorImeNodeElement(
+internal data class EditorImeNodeElement(
     private val session: EditorSession,
     private val handle: ImeHandle,
     private val onComposingChanged: (String?) -> Unit,
@@ -263,6 +264,9 @@ internal class EditorImeConnection(
 
     override fun getEditable(): Editable? = null
 
+    /** This editor owns a full mirror of the text; content commits are never used. */
+    override fun commitContent(inputContentInfo: InputContentInfo, flags: Int, opts: Bundle?): Boolean = false
+
     // ------------------------------------------------------------------
     // text queries (served from the mirror on any thread, lock-guarded)
     // ------------------------------------------------------------------
@@ -313,10 +317,10 @@ internal class EditorImeConnection(
             val windowStart = (mirrorCaret - before).coerceAtLeast(0)
             val windowEnd = (mirrorCaret + after).coerceAtMost(mirror.length)
             SurroundingText(
-                text = mirror.substring(windowStart, windowEnd),
-                selectionStart = mirrorCaret - windowStart,
-                selectionEnd = mirrorCaret - windowStart,
-                offset = windowStart,
+                mirror.substring(windowStart, windowEnd),
+                mirrorCaret - windowStart,
+                mirrorCaret - windowStart,
+                windowStart,
             )
         }
 
