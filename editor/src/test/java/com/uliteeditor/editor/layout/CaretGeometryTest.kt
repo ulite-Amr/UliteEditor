@@ -1,0 +1,182 @@
+package com.uliteeditor.editor.layout
+
+import androidx.compose.ui.text.style.ResolvedTextDirection
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class CaretGeometryTest {
+    @Test
+    fun emptyTextIsLtr() {
+        assertEquals(
+            ResolvedTextDirection.Ltr,
+            caretAnchorDirection("", 0, null),
+        )
+    }
+
+    @Test
+    fun trailingSpaceAfterArabicInheritsRtlRun() {
+        val text = "مرحبا "
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection(text, text.length, null),
+        )
+    }
+
+    @Test
+    fun trailingNbspAfterArabicInheritsRtlRun() {
+        val text = "مرحبا\u00A0"
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection(text, text.length, null),
+        )
+    }
+
+    @Test
+    fun trailingSpaceAfterLatinStaysLtr() {
+        val text = "hello "
+        assertEquals(
+            ResolvedTextDirection.Ltr,
+            caretAnchorDirection(text, text.length, null),
+        )
+    }
+
+    @Test
+    fun leadingRtlLineHugsRightEdge() {
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection("مرحبا", 0, null),
+        )
+    }
+
+    @Test
+    fun leadingLtrLineHugsLeftEdge() {
+        assertEquals(
+            ResolvedTextDirection.Ltr,
+            caretAnchorDirection("hello", 0, null),
+        )
+    }
+
+    @Test
+    fun typedStrongCharAnchorsImmediately() {
+        // Latin typed into an Arabic line flips the caret left immediately.
+        assertEquals(
+            ResolvedTextDirection.Ltr,
+            caretAnchorDirection("مرحباa", "مرحباa".length - 1, ResolvedTextDirection.Rtl),
+        )
+    }
+
+    @Test
+    fun ltrRtlBoundaryUsesInputLanguage() {
+        val text = "ab مرحبا"
+        val boundary = 2 // on the space between 'b' (LTR) and 'م' (RTL)
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection(text, boundary, ResolvedTextDirection.Rtl),
+        )
+        assertEquals(
+            ResolvedTextDirection.Ltr,
+            caretAnchorDirection(text, boundary, ResolvedTextDirection.Ltr),
+        )
+    }
+
+    @Test
+    fun ltrRtlBoundaryFallsBackToLeftWithoutInput() {
+        val text = "ab مرحبا"
+        assertEquals(
+            ResolvedTextDirection.Ltr,
+            caretAnchorDirection(text, 2, null),
+        )
+    }
+
+    @Test
+    fun rtlLtrBoundaryUsesInputLanguage() {
+        val text = "مرحبا ab"
+        val boundary = "مرحبا".length // on the space between 'ا' and 'a'
+        assertEquals(
+            ResolvedTextDirection.Ltr,
+            caretAnchorDirection(text, boundary, ResolvedTextDirection.Ltr),
+        )
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection(text, boundary, ResolvedTextDirection.Rtl),
+        )
+    }
+
+    @Test
+    fun interiorSpaceBetweenSameRunKeepsThatDirection() {
+        // Space inside an Arabic line stays RTL; inside a Latin line stays LTR.
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection("مرحبا بيك", "مرحبا".length, null),
+        )
+        assertEquals(
+            ResolvedTextDirection.Ltr,
+            caretAnchorDirection("hello world", "hello".length, ResolvedTextDirection.Rtl),
+        )
+    }
+
+    @Test
+    fun surrogatePairAnchorsAsSingleStrongChar() {
+        // Trailing: the caret past the emoji walks back over the pair as one
+        // LTR strong code point.
+        assertEquals(
+            ResolvedTextDirection.Ltr,
+            caretAnchorDirection("a\uD83D\uDE00", 3, ResolvedTextDirection.Rtl),
+        )
+        // Boundary on the space between an emoji (LTR pair) and an RTL run:
+        // the left scan rewinds the low surrogate to the pair, the two sides
+        // disagree, and input direction wins.
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection("\uD83D\uDE00 مرحبا", 2, ResolvedTextDirection.Rtl),
+        )
+        assertEquals(
+            ResolvedTextDirection.Ltr,
+            caretAnchorDirection("\uD83D\uDE00 مرحبا", 2, ResolvedTextDirection.Ltr),
+        )
+    }
+
+    @Test
+    fun isolatedLeadingSpacesFallBackToStrongChar() {
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection("  مرحبا", "  ".length, null),
+        )
+    }
+
+    @Test
+    fun whollyWhitespaceLineStaysLtr() {
+        assertEquals(
+            ResolvedTextDirection.Ltr,
+            caretAnchorDirection("   ", 3, null),
+        )
+    }
+
+    // --- neutralRunAtCaret classification ---
+
+    @Test
+    fun trailingSpaceRunAtEndOfText() {
+        assertEquals(5..5, neutralRunAtCaret("مرحبا ", 6))
+    }
+
+    @Test
+    fun interiorSpaceRunExpandsBothWays() {
+        assertEquals(1..3, neutralRunAtCaret("a   b", 2))
+    }
+
+    @Test
+    fun nonNeutralPositionIsNull() {
+        assertNull(neutralRunAtCaret("hello", 1))
+    }
+
+    @Test
+    fun multipleTrailingSpacesFormOneRun() {
+        assertEquals(5..7, neutralRunAtCaret("مرحبا   ", 8))
+    }
+
+    @Test
+    fun nbspAndZwspCountAsNeutral() {
+        assertEquals(5..6, neutralRunAtCaret("مرحبا\u00A0\u200B", 7))
+    }
+}
