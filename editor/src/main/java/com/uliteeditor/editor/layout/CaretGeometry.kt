@@ -160,7 +160,7 @@ private fun strongCharDirection(text: String, index: Int): ResolvedTextDirection
  * concerns only blank characters.
  */
 private fun isScanNeutralCodePoint(codePoint: Int): Boolean =
-    when (Character.getType(codePoint)) {
+    when (Character.getType(codePoint).toByte()) {
         Character.START_PUNCTUATION,
         Character.END_PUNCTUATION,
         Character.OTHER_PUNCTUATION,
