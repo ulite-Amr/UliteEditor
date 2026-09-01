@@ -223,6 +223,16 @@ class CaretGeometryTest {
         )
     }
 
+    @Test
+    fun trailingJoinerAfterArabicInheritsRtlRun() {
+        // ZWJ is a bidi-format control: the scans step past it (the FORMAT
+        // branch of isScanNeutralCodePoint) to the strong Arabic char.
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection("مرحبا\u200D", 6, null),
+        )
+    }
+
     // --- neutralRunAtCaret classification ---
 
     @Test

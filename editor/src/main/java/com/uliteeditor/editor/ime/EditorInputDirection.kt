@@ -9,10 +9,12 @@ import androidx.compose.ui.text.style.ResolvedTextDirection
  * a caret sitting on an LTR↔RTL BiDi run boundary hugs the side the user is
  * actually typing into (typing Arabic → the RTL run's side, Latin → LTR).
  *
- * Direction is read from the current IME subtype's language tag. When the
- * keyboard exposes none (or reports a script we do not map) this returns null
- * and the caret rule falls back to the nearest strong character, so the
- * editor degrades gracefully without an Android-IME dependency.
+ * Direction is read from the current IME subtype's language tag: a tag in the
+ * RTL set maps to Rtl, every other non-blank tag maps to Ltr (the platform
+ * default, so a Latin keyboard keeps the LTR side of a boundary), and when
+ * the keyboard exposes no subtype or an empty tag this returns null and the
+ * caret rule falls back to the nearest strong character — the editor degrades
+ * gracefully without an Android-IME dependency.
  */
 internal object EditorInputDirection {
     private val RTL_LANG_TAGS = setOf(
@@ -25,8 +27,9 @@ internal object EditorInputDirection {
     )
 
     /**
-     * The [ResolvedTextDirection] of the active keyboard, or null when the
-     * IME exposes no language or the language is not mapped.
+     * The active keyboard's direction: Rtl when its primary language is in
+     * the mapped RTL set, Ltr for any other non-blank tag, or null when the
+     * IME exposes no subtype or an empty language tag.
      */
     fun current(context: Context): ResolvedTextDirection? {
         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
