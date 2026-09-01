@@ -17,11 +17,11 @@ import androidx.compose.ui.text.style.ResolvedTextDirection
 internal object EditorInputDirection {
     private val RTL_LANG_TAGS = setOf(
         // Arabic
-        "ar", "fa", "ps", "sd", "ur", "ug", "ckb", "ars", "uz",
+        "ar", "fa", "ps", "sd", "ur", "ug", "ckb", "ars", "prs",
         // Hebrew
         "he", "iw", "yi",
         // Other RTL scripts
-        "dv", "nqo", "syr", "prv",
+        "dv", "nqo", "syr",
     )
 
     /**

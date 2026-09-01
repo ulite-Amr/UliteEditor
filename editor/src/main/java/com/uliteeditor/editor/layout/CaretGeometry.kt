@@ -31,7 +31,16 @@ internal data class CaretSpot(val x: Float, val y: Float)
  * that collapse and fall back to the run edge shifted by the run's real width
  * on the anchor side (LTR: +width right, RTL: −width left). When the platform
  * already advanced the caret across the neutral run, that position is used
- * as-is and no extra measure happens.
+ * as-is and no extra measure happens. The advance applies only when the caret
+ * strictly follows the run (`run.first < caret`); a caret on the run's own
+ * first char is an interior or line-leading position the platform already
+ * places, and is returned un-shifted so single spaces between words are never
+ * double-advanced.
+ *
+ * The anchoring scans in [caretAnchorDirection] also step past bidi-neutral
+ * punctuation, digits and format controls (see [isScanNeutralCodePoint]), so
+ * a trailing `!`, `؟` or digit sequence after an Arabic run inherits the RTL
+ * run exactly as trailing Space does.
  *
  * Mirrors are decided per run from the strong character that anchors the
  * caret (script class), never from the neutral that sits on the boundary.
@@ -57,9 +66,14 @@ internal fun caretXIn(
         ResolvedTextDirection.Ltr -> leftMarginPx + rect.left
     }
     // Reserve explicit width for the neutral run touching the caret when the
-    // platform collapsed it (see class doc). The run's own edge is interior,
-    // so getCursorRect is reliable there; only the trailing advance is added.
+    // platform collapsed it (see class doc). Only a caret that strictly
+    // *follows* the run (run.first < caret, the L1-trailing case) can be a
+    // flattened trailing neutral; a caret seated ON the run's first char (an
+    // interior or line-leading neutral) is already placed by the platform, so
+    // returning here keeps interior whitespace from being pushed a whole
+    // run-width past the true boundary.
     val run = neutralRunAtCaret(text, caret) ?: return baseX
+    if (caret <= run.first) return baseX
     val core16 = run.first
     val rectCore = layout.getCursorRect(core16)
     val coreX = when (decided) {
@@ -87,11 +101,12 @@ private fun measureAdvance(tail: String, textStyle: TextStyle, textMeasurer: Tex
  *  1. A strong character exactly at the caret — the instant a strong char is
  *     typed it anchors immediately (typing Latin into an Arabic line flips
  *     the caret left right away).
- *  2. The nearest strong character across neutrals on either side: if both
+ *  2. The nearest strong character across neutrals on either side (whitespace
+ *     plus bidi-neutral punctuation, digits and format controls): if both
  *     sides agree, that direction; if only one side has a strong char, that
- *     one (so a trailing Space after Arabic inherits the RTL run, and a
- *     leading position on an RTL start hugs the right edge); an empty text
- *     stays LTR (blank-field match).
+ *     one (so a trailing Space — or a trailing `!`, `؟`, or digits — after
+ *     Arabic inherits the RTL run, and a leading position on an RTL start
+ *     hugs the right edge); an empty text stays LTR (blank-field match).
  *  3. When the nearest strongs bracket the caret in *opposite* directions — a
  *     true LTR↔RTL BiDi run boundary — [inputDirection] (the active keyboard
  *     language) picks the side you are typing into, falling back to the left
@@ -128,11 +143,36 @@ internal fun caretAnchorDirection(
 private fun strongCharDirection(text: String, index: Int): ResolvedTextDirection? {
     val codePoint = text.codePointAt(index)
     return when {
-        isNeutralCodePoint(codePoint) -> null
+        isNeutralCodePoint(codePoint) || isScanNeutralCodePoint(codePoint) -> null
         isRtlCodePoint(codePoint) -> ResolvedTextDirection.Rtl
         else -> ResolvedTextDirection.Ltr
     }
 }
+
+/**
+ * Bidi-neutral for the anchoring scans: Unicode punctuation (P*), decimal
+ * digits (Nd — the UBA EN/AN classes) and format controls (F, incl. ZWJ, ZWNJ
+ * and the bidi control marks) are not strong, so the scans in
+ * [caretAnchorDirection] step across them to the nearest strong character —
+ * a trailing `!`/`؟`/digit run after an Arabic run inherits the RTL run
+ * instead of flipping the caret to LTR. Kept separate from
+ * [isNeutralCodePoint] because caret-width reservation ([neutralRunAtCaret])
+ * concerns only blank characters.
+ */
+private fun isScanNeutralCodePoint(codePoint: Int): Boolean =
+    when (Character.getType(codePoint)) {
+        Character.START_PUNCTUATION,
+        Character.END_PUNCTUATION,
+        Character.OTHER_PUNCTUATION,
+        Character.DASH_PUNCTUATION,
+        Character.CONNECTOR_PUNCTUATION,
+        Character.INITIAL_QUOTE_PUNCTUATION,
+        Character.FINAL_QUOTE_PUNCTUATION,
+        Character.DECIMAL_DIGIT_NUMBER,
+        Character.FORMAT,
+        -> true
+        else -> false
+    }
 
 private fun isNeutralCodePoint(codePoint: Int): Boolean =
     Character.isWhitespace(codePoint) ||

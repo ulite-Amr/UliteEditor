@@ -153,6 +153,76 @@ class CaretGeometryTest {
         )
     }
 
+    @Test
+    fun trailingPunctuationAfterArabicInheritsRtlRun() {
+        // '.', '!' and '؟' are bidi-neutral: the caret past them walks back to
+        // the strong Arabic char, so the EOF caret hugs the RTL run's side.
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection("مرحبا.", 6, null),
+        )
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection("مرحبا!", 6, null),
+        )
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection("مرحبا؟", 6, null),
+        )
+    }
+
+    @Test
+    fun trailingDigitsAfterArabicInheritsRtlRun() {
+        // Decimal digits are bidi-neutral (EN/AN), so a trailing number after
+        // an Arabic run keeps the caret on the RTL side.
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection("مرحبا123", 8, null),
+        )
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection("مرحبا١٢٣", 8, null),
+        )
+    }
+
+    @Test
+    fun isolatedPunctuationLineStaysLtr() {
+        // No strong char on either side of an all-neutral line → LTR (blank
+        // field match), unlike a single punctuation char next to Arabic.
+        assertEquals(
+            ResolvedTextDirection.Ltr,
+            caretAnchorDirection("!!!", 3, null),
+        )
+    }
+
+    @Test
+    fun punctuationInsideLatinLineStaysLtr() {
+        // A caret on the comma is bracketed by LTR strong chars → LTR even
+        // with an Arabic keyboard active.
+        assertEquals(
+            ResolvedTextDirection.Ltr,
+            caretAnchorDirection("hello, world", 5, ResolvedTextDirection.Rtl),
+        )
+    }
+
+    @Test
+    fun digitInsideArabicSentenceStaysRtl() {
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection("مرحبا1بيك", 5, ResolvedTextDirection.Rtl),
+        )
+    }
+
+    @Test
+    fun caretOnLeadingNeutralOfRtlLineHugsRightEdge() {
+        // Caret ON an interior leading space (rule 2, one-sided) hugs the RTL
+        // start, distinct from the caret-on-first-strong-char case.
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            caretAnchorDirection("  مرحبا", 1, null),
+        )
+    }
+
     // --- neutralRunAtCaret classification ---
 
     @Test
