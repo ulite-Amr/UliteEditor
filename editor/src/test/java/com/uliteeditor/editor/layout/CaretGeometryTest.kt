@@ -287,6 +287,18 @@ class CaretGeometryTest {
     @Test
     fun trailingNbspAndZwspAnchor() {
         assertEquals(4, trailingNeutralAnchorBefore("مرحبا\u00A0\u200B", 7))
+        // caret on the run's first char still anchors (the "step off" case).
+        assertEquals(4, trailingNeutralAnchorBefore("مرحبا\u00A0\u200B", 5))
+    }
+
+    @Test
+    fun surrogatePairBeforeTrailingBlankAnchorsAtPairStart() {
+        // "😀 " = \uD83D \uDE00 ' '. The anchor must be the high surrogate
+        // (0), NOT the low surrogate (1): a mid-pair anchor measures a lone
+        // low surrogate (tofu box) and reads an in-pair platform rect.
+        assertEquals(0, trailingNeutralAnchorBefore("\uD83D\uDE00 ", 3))
+        assertEquals(0, trailingNeutralAnchorBefore("\uD83D\uDE00 ", 2))
+        assertEquals(0, trailingNeutralAnchorBefore("\uD83D\uDE00  ", 4))
     }
 
     @Test

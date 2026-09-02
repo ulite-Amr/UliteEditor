@@ -32,8 +32,10 @@ internal data class CaretSpot(val x: Float, val y: Float)
  * ([trailingNeutralAnchorBefore]) plus the *measured* advance across
  * everything up to the caret on the anchor side (RTL: −width left, LTR:
  * +width right). The anchor char's own advance is included, which is exactly
- * the distance a caret crossing it must travel, so the position is correct
- * whether or not the platform preserved the blank widths. Every other
+ * the distance a caret crossing it must travel. This is position-exact for
+ * LTR in both the collapsed and width-preserved regimes; for RTL it targets
+ * the flattened (L1) regime reported on-device, where the platform rect at
+ * the caret is the bug. Every other
  * position — non-blank carets, mid-line blank runs, leading blank runs — is
  * placed by the platform as-is.
  *
@@ -248,7 +250,12 @@ internal fun neutralRunAtCaret(text: String, caretUtf16: Int): IntRange? {
 internal fun trailingNeutralAnchorBefore(text: String, caret: Int): Int? {
     val run = neutralRunAtCaret(text, caret.coerceIn(0, text.length)) ?: return null
     if (run.last != text.length - 1) return null
-    val anchor = run.first - 1
+    var anchor = run.first - 1
+    // The char before the run may be the LOW surrogate of a supplementary
+    // code point (e.g. `"😀 "`): the anchor, the measured substring and the
+    // platform rect must all start at the pair's high surrogate, not inside
+    // the pair (a lone low surrogate measures a replacement box).
+    while (anchor > 0 && text[anchor].isLowSurrogate()) anchor--
     return if (anchor >= 0) anchor else null
 }
 
