@@ -266,7 +266,8 @@ class CaretGeometryTest {
     fun trailingSpaceAnchorsOnPrecedingStrongChar() {
         assertEquals(4, trailingNeutralAnchorBefore("مرحبا ", 6))
         assertEquals(4, trailingNeutralAnchorBefore("مرحبا ", 5))
-        assertEquals(3, trailingNeutralAnchorBefore("hello ", 5))
+        // "hello ": the run is the lone space at 5, anchored on 'o' at 4.
+        assertEquals(4, trailingNeutralAnchorBefore("hello ", 5))
     }
 
     @Test
