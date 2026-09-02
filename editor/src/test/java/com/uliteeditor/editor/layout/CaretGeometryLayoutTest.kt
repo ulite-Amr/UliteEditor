@@ -6,9 +6,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.unit.Constraints
-import kotlin.math.abs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -51,6 +51,8 @@ class CaretGeometryLayoutTest {
 
         assertNotEquals("caret must leave the strong char", xStrong, xSpace)
         assertNotEquals("caret must advance onto the trailing space", xSpace, xEof)
+        // LTR: the caret advances right (positive). Assert the SIGN, not abs(),
+        // so a mirror/advance sign flip in caretXIn fails the test.
         assertEquals('o'.advance(tm, style), xSpace - xStrong, STEP_EPS)
         assertEquals(' '.advance(tm, style), xEof - xSpace, STEP_EPS)
     }
@@ -67,10 +69,17 @@ class CaretGeometryLayoutTest {
         val xSpace = caretXIn(layout, 5, 0f, style, tm, RTL)
         val xEof = caretXIn(layout, 6, 0f, style, tm, RTL)
 
-        assertNotEquals("caret must leave the strong char", xStrong, xSpace)
-        assertNotEquals("caret must advance onto the trailing space", xSpace, xEof)
-        assertEquals('ا'.advance(tm, style), abs(xSpace - xStrong), STEP_EPS)
-        assertEquals(' '.advance(tm, style), abs(xEof - xSpace), STEP_EPS)
+        // RTL: the caret moves LEFT (negative) as it steps through the trailing
+        // blank. Asserting the SIGN (not abs) is what pins the RTL mirror in
+        // caretXIn (layout.size.width - anchorRect.right - advance): a sign
+        // flip there would otherwise pass an abs() magnitude check.
+        assertTrue(
+            "RTL caret must move left through the trailing blank: " +
+                "xStrong=$xStrong xSpace=$xSpace xEof=$xEof",
+            xSpace < xStrong && xEof < xSpace,
+        )
+        assertEquals(-'ا'.advance(tm, style), xSpace - xStrong, STEP_EPS)
+        assertEquals(-' '.advance(tm, style), xEof - xSpace, STEP_EPS)
     }
 
     @Test
@@ -152,11 +161,34 @@ class CaretGeometryLayoutTest {
 
         // On the final (wrapped) line the trailing blank is its own wrap unit;
         // the caret must still step one space-width at a time, not flatten.
+        // RTL: moves left (negative) on the wrapped line.
         val len = text.length
         val xBefore = caretXIn(layout, len - 1, 0f, style, tm, RTL)
         val xEof = caretXIn(layout, len, 0f, style, tm, RTL)
-        assertNotEquals("wrapped trailing caret must advance", xBefore, xEof)
-        assertEquals(' '.advance(tm, style), abs(xEof - xBefore), WRAP_EPS)
+        assertTrue("wrapped trailing caret must move left", xEof < xBefore)
+        assertEquals(-' '.advance(tm, style), xEof - xBefore, WRAP_EPS)
+    }
+
+    @Test
+    fun emptyTextReturnsLeftMargin() {
+        lateinit var tm: TextMeasurer
+        compose.setContent { tm = rememberTextMeasurer() }
+        val layout = tm.measure("", TextStyle.Default)
+        assertEquals(7f, caretXIn(layout, 0, 7f, TextStyle.Default, tm, LTR), STEP_EPS)
+    }
+
+    @Test
+    fun caretClampedToTextLength() {
+        lateinit var tm: TextMeasurer
+        compose.setContent { tm = rememberTextMeasurer() }
+        val style = TextStyle.Default
+        val text = "hello "
+        val layout = tm.measure(text, style)
+
+        // A caret beyond end-of-text must match the caret exactly at end-of-text.
+        val atEnd = caretXIn(layout, 6, 0f, style, tm, LTR)
+        val beyondEnd = caretXIn(layout, 999, 0f, style, tm, LTR)
+        assertEquals(atEnd, beyondEnd, STEP_EPS)
     }
 
     private companion object {
