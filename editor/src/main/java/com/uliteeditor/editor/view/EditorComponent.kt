@@ -32,7 +32,6 @@ import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -41,6 +40,8 @@ import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.ResolvedTextDirection
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextMotion
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -49,7 +50,6 @@ import com.uliteeditor.editor.EditorDimensions
 import com.uliteeditor.editor.bidi.TextIndex
 import com.uliteeditor.editor.effects.runFlingLoop
 import com.uliteeditor.editor.effects.runMetricsLoop
-import com.uliteeditor.editor.ime.EditorInputDirection
 import com.uliteeditor.editor.ime.ImeHandle
 import com.uliteeditor.editor.ime.editorIme
 import com.uliteeditor.editor.input.EditorGestureConfig
@@ -112,11 +112,6 @@ fun EditorComponent(
     val editorSettings = settings ?: remember { EditorSettings() }
     val textMeasurer: TextMeasurer = rememberTextMeasurer()
     val focusRequester = remember { FocusRequester() }
-    val context = LocalContext.current
-    // Active keyboard language → BiDi caret anchor. Read once, refreshed on
-    // focus gain and on taps (when the user may have switched keyboards);
-    // a null (no readable IME language) falls back to the nearest strong char.
-    var inputDirection by remember { mutableStateOf(EditorInputDirection.current(context)) }
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
@@ -152,7 +147,6 @@ fun EditorComponent(
         // and settles solid on return; a leftover composing preview clears.
         if (focused) {
             blink.reset()
-            inputDirection = EditorInputDirection.current(context)
         } else {
             blink.hide()
             composingState = null
@@ -239,9 +233,8 @@ fun EditorComponent(
         leftMarginPx,
         textStyle,
         textMeasurer,
-        inputDirection,
     ) {
-        steadyCaretSpot(rebuilt, cursor, leftMarginPx, textStyle, textMeasurer, inputDirection)
+        steadyCaretSpot(rebuilt, cursor, leftMarginPx, textStyle, textMeasurer)
     }
 
     // While the IME holds text in composition (autocorrect / suggestions /
@@ -254,6 +247,14 @@ fun EditorComponent(
     val caretRowText = session.lineText(caretRow.toULong())
     val caretRowUtf16 = TextIndex.utf16IndexAtByteOffset(caretRowText, session.cursor().column.toLong())
     val caretRowFirstTop = rebuilt.rowTops.getOrNull(caretRow) ?: steadyCaret.y
+    // The composing preview overlays the caret's own row, so it must share the
+    // row's paragraph alignment or the inserted text would visually jump sides
+    // on an RTL row while composing.
+    val caretRowTextAlign = when (rebuilt.rowDirections.getOrNull(caretRow)
+        ?: ResolvedTextDirection.Ltr) {
+        ResolvedTextDirection.Rtl -> TextAlign.Right
+        ResolvedTextDirection.Ltr -> TextAlign.Left
+    }
     val composingLayout = remember(
         composingText,
         composingColor,
@@ -262,6 +263,7 @@ fun EditorComponent(
         wrapEnabled,
         caretRow,
         caretRowUtf16,
+        caretRowTextAlign,
         contentTick,
     ) {
         composingText?.let { composing ->
@@ -273,6 +275,7 @@ fun EditorComponent(
                 textStyle = textStyle,
                 wrapWidthPx = wrapWidthPx,
                 wrapEnabled = wrapEnabled,
+                textAlign = caretRowTextAlign,
                 textMeasurer = textMeasurer,
             )
         }
@@ -287,7 +290,6 @@ fun EditorComponent(
                 leftMarginPx,
                 textStyle,
                 textMeasurer,
-                inputDirection,
             ),
             y = caretRowFirstTop + caretTopIn(composingLayout, composingEndUtf16),
         )
@@ -413,7 +415,6 @@ fun EditorComponent(
         onTap = { row, column ->
             session.setCursor(CursorPosition(row, column))
             imeHandle.syncSelectionFromEngine()
-            inputDirection = EditorInputDirection.current(context)
             blink.reset()
         },
         onFocusRequest = { focusRequester.requestFocus() },

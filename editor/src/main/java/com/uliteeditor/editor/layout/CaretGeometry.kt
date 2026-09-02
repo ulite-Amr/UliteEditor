@@ -14,52 +14,31 @@ internal data class CaretSpot(val x: Float, val y: Float)
 /**
  * X, in content space, of the caret at UTF-16 [utf16] inside [layout].
  *
- * The computed x is the run edge for the direction returned by
- * [caretAnchorDirection] ([inputDirection] is the active keyboard language, so
- * a caret on a BiDi run boundary hugs the side you are actually typing into):
- * the caret sits at the rect's left edge in every case. There is deliberately
- * **no** RTL mirror (no `layoutWidth - rect.right`): Compose already resolves
- * bidi internally, so [TextLayoutResult.getCursorRect] returns the caret's
- * visual x for an RTL run just as it does for an LTR one. The old mirror was
- * lifted from androidx `TextFieldCoreModifier.getCursorRectInScroller`, which
- * serves a single-line, horizontally scrolling, `LayoutDirection.Ltr`-forced
- * scroller container — none of which this plain, multi-line, unfixed-direction
- * Text has. Applying that mirror here double-inverted a position that was
- * already correct: it only appeared right on paragraphs that were entirely
- * base-RTL (where the inversion cancels), and was wrong for a paragraph that
- * began LTR and later gained Arabic, or on a trailing blank after an Arabic
- * run (where the inversion was effectively applied twice).
+ * The caret sits at the platform rect's left edge in every case — there is
+ * deliberately **no** RTL mirror (no `layoutWidth - rect.right`). Compose
+ * already resolves bidi internally, so [TextLayoutResult.getCursorRect]
+ * returns the caret's *visual* x for an RTL run just as it does for an LTR
+ * one. Paragraph alignment (which side of the viewport a run leans on) is
+ * applied at layout time in [buildEditorLayout], not here.
  *
- * A caret facing a run of *trailing* blanks (end-of-line Space after an Arabic
- * run, NBSP, or ZWSP) cannot trust [TextLayoutResult.getCursorRect]: the
- * platform resolves a trailing neutral flat (UBA rule L1) and its caret spots
- * at and past the blank run collapse onto the preceding run's edge, so the
- * caret looks glued (a typed Space never advances it) and Backspace appears
- * to snap across the boundary. For that one regime x is rebuilt from the
- * stable rect at the last non-blank character before the run
- * ([trailingNeutralAnchorBefore]) plus the *measured* advance across
- * everything up to the caret on the anchor side (RTL: −width left, LTR:
- * +width right). The anchor char's own advance is included, which is exactly
- * the distance a caret crossing it must travel. This is position-exact for
- * LTR in both the collapsed and width-preserved regimes; for RTL it targets
- * the flattened (L1) regime reported on-device, where the platform rect at
- * the caret is the bug. Every other
- * position — non-blank carets, mid-line blank runs, leading blank runs — is
- * placed by the platform as-is.
+ * One regime is not trusted: a caret facing a *trailing* run of blanks
+ * (end-of-line Space/NBSP/ZWSP). The platform resolves a trailing neutral
+ * flat (UBA rule L1): its caret spots at and past the blank run collapse onto
+ * the preceding run's edge, so the caret looks glued (a typed Space never
+ * advances it) and Backspace appears to snap across the boundary — the
+ * "Space doesn't advance" and RTL end-of-text misplacement bugs. For that one
+ * regime the x is rebuilt from the stable rect at the last non-blank char
+ * before the run ([trailingNeutralAnchorBefore]) plus the *measured* advance
+ * across everything up to the caret on the anchor side (RTL: −width left,
+ * LTR: +width right). The anchor char's own advance is included, which is
+ * exactly the distance a caret crossing it must travel. This is what the
+ * absolute-position layout tests pin; without it, `rtlTrailingSpace*` and the
+ * wrapped-blank tests fail.
  *
- * The anchoring scans in [caretAnchorDirection] also step past bidi-neutral
- * punctuation, digits and format controls (see [isScanNeutralCodePoint]), so
- * a trailing `!`, `؟` or digit sequence after an Arabic run inherits the RTL
- * run exactly as trailing Space does; a trailing blank run after punctuation
- * (e.g. `مرحبا! `) anchors on the punctuation char, whose rect the platform
- * does not flatten.
- *
- * Direction is the caret's travel direction only — it decides the *sign* of
- * the trailing-blank rebuild's measured advance (RTL walks left/−, LTR walks
- * right/+), never which side of the platform rect to take. The rect's left edge
- * is the anchor in every case. (Direction is decided per run from the strong
- * character that anchors the caret — script class — never from the neutral
- * that sits on the boundary.)
+ * The rebuild's direction sign comes from the trailing run's own strong
+ * character (the anchor's run direction) via [lastStrongDirectionBefore] —
+ * never from an input-language signal, so the IME input-direction subsystem
+ * stays removed.
  */
 internal fun caretXIn(
     layout: TextLayoutResult,
@@ -67,33 +46,24 @@ internal fun caretXIn(
     leftMarginPx: Float,
     textStyle: TextStyle,
     textMeasurer: TextMeasurer,
-    inputDirection: ResolvedTextDirection?,
 ): Float {
     val text = layout.layoutInput.text.text
     if (text.isEmpty()) return leftMarginPx
     val caret = utf16.coerceIn(0, text.length)
-    val decided = caretAnchorDirection(text, caret, inputDirection)
     val rect = layout.getCursorRect(caret)
-    // No direction mirror here: Compose already resolves bidi internally, so
-    // [TextLayoutResult.getCursorRect] returns the caret's *visual* x, for RTL
-    // runs just the same as LTR. The old `layoutWidth - rect.right` mirror was
-    // lifted from androidx TextField's single-line, horizontally-scrolling,
-    // LayoutDirection.Ltr-forced scroller container — none of which this plain
-    // multi-line Text has — so it double-inverted a position that was already
-    // correct, except it "accidentally" cancelled out on paragraphs that were
-    // entirely base-RTL. Both directions just take the platform rect's left.
     val baseX = leftMarginPx + rect.left
-    // Rebuild the x for a collapsed trailing-blank caret (see doc above);
-    // anything non-trailing returns the platform-rect base right away.
+    // Rebuild a collapsed trailing-blank caret (see doc above); every other
+    // position returns the platform rect's left as-is.
     val anchor = trailingNeutralAnchorBefore(text, caret) ?: return baseX
     val tail = text.substring(anchor, caret)
     val advance = measureAdvance(tail, textStyle, textMeasurer)
     val anchorRect = layout.getCursorRect(anchor)
-    // Rebuild still pins the caret's *magnitude* to the measured advance; only
-    // its sign differs by the caret's travel direction (RTL walks left/−,
-    // LTR walks right/+). The anchor side is the platform rect's left either
-    // way — no mirror.
-    return leftMarginPx + anchorRect.left + (if (decided == ResolvedTextDirection.Rtl) -advance else advance)
+    val anchorDirection = lastStrongDirectionBefore(text, anchor + 1) ?: ResolvedTextDirection.Ltr
+    // The rebuild pins the caret's *magnitude* to the measured advance; only
+    // its sign differs by the trailing run's direction (RTL walks left/−, LTR
+    // walks right/+). The anchor side is the platform rect's left either way.
+    return leftMarginPx + anchorRect.left +
+        (if (anchorDirection == ResolvedTextDirection.Rtl) -advance else advance)
 }
 
 private fun measureAdvance(tail: String, textStyle: TextStyle, textMeasurer: TextMeasurer): Float {
@@ -102,48 +72,23 @@ private fun measureAdvance(tail: String, textStyle: TextStyle, textMeasurer: Tex
 }
 
 /**
- * The strong-character direction that governs the caret at UTF-16 [utf16],
- * preferring (in order):
- *  1. A strong character exactly at the caret — the instant a strong char is
- *     typed it anchors immediately (typing Latin into an Arabic line flips
- *     the caret left right away).
- *  2. The nearest strong character across neutrals on either side (whitespace
- *     plus bidi-neutral punctuation, digits and format controls): if both
- *     sides agree, that direction; if only one side has a strong char, that
- *     one (so a trailing Space — or a trailing `!`, `؟`, or digits — after
- *     Arabic inherits the RTL run, and a leading position on an RTL start
- *     hugs the right edge); an empty text stays LTR (blank-field match).
- *  3. When the nearest strongs bracket the caret in *opposite* directions — a
- *     true LTR↔RTL BiDi run boundary — [inputDirection] (the active keyboard
- *     language) picks the side you are typing into, falling back to the left
- *     run when there is no keyboard language signal.
+ * The paragraph's base direction, derived from its first strong character
+ * (the UBA first-strong rule): a line that opens with an RTL character
+ * (Arabic, Hebrew, …) is a right-to-left paragraph for layout alignment, and
+ * one that opens with any strong Latin/other character is LTR; a line with no
+ * strong character at all (blank) defaults to LTR, matching Compose's default.
  *
- * Direction is decided from the strong characters' script class (RTL: Arabic,
- * Hebrew and the other RTL blocks; everything else strong is LTR); the mirror
- * in [caretXIn] uses this decided direction, so no [TextLayoutResult]
- * is needed here and the rule is fully unit-testable.
+ * This is the single source of truth for *alignment* (where the paragraph sits
+ * horizontally against the margin). The paragraph base direction never changes
+ * as text is appended — the first strong char is fixed — so it is computed once
+ * per row at layout time and reused by layout and caret alike. (The caret does
+ * not read this value directly: the no-RTL-mirror [caretXIn] returns the
+ * platform rect's left, and the restored trailing-blank rebuild picks its sign
+ * from the trailing run's own strong char via [lastStrongDirectionBefore], so
+ * both stay consistent with a paragraph whose base direction is already fixed.)
  */
-internal fun caretAnchorDirection(
-    text: String,
-    utf16: Int,
-    inputDirection: ResolvedTextDirection?,
-): ResolvedTextDirection {
-    if (text.isEmpty()) return ResolvedTextDirection.Ltr
-    // 1. A strong char exactly at the caret boundary.
-    if (utf16 in 0 until text.length) {
-        strongCharDirection(text, utf16)?.let { return it }
-    }
-    // 2/3. Nearest strong char on each side, across neutrals.
-    val left = lastStrongDirectionBefore(text, utf16)
-    val right = firstStrongDirectionAfter(text, utf16)
-    return when {
-        left != null && right == null -> left
-        right != null && left == null -> right
-        left != null && left == right -> left
-        left != null && right != null -> inputDirection ?: left
-        else -> ResolvedTextDirection.Ltr
-    }
-}
+internal fun paragraphBaseDirection(text: String): ResolvedTextDirection =
+    firstStrongDirectionAfter(text, 0) ?: ResolvedTextDirection.Ltr
 
 /** Direction of the strong character at UTF-16 [index], or null when neutral. */
 private fun strongCharDirection(text: String, index: Int): ResolvedTextDirection? {
@@ -156,14 +101,11 @@ private fun strongCharDirection(text: String, index: Int): ResolvedTextDirection
 }
 
 /**
- * Bidi-neutral for the anchoring scans: Unicode punctuation (P*), decimal
- * digits (Nd — the UBA EN/AN classes) and format controls (F, incl. ZWJ, ZWNJ
- * and the bidi control marks) are not strong, so the scans in
- * [caretAnchorDirection] step across them to the nearest strong character —
- * a trailing `!`/`؟`/digit run after an Arabic run inherits the RTL run
- * instead of flipping the caret to LTR. Kept separate from
- * [isNeutralCodePoint] because caret-width reservation ([neutralRunAtCaret])
- * concerns only blank characters.
+ * Bidi-neutral for the first-strong paragraph scan: Unicode punctuation (P*),
+ * decimal digits (Nd — the UBA EN/AN classes) and format controls (F, incl.
+ * ZWJ, ZWNJ and the bidi control marks) are not strong, so [paragraphBaseDirection]
+ * steps past them to the first strong character (a paragraph that opens with
+ * `!`, `؟` or digits borrows the direction of the strong char after them).
  */
 private fun isScanNeutralCodePoint(codePoint: Int): Boolean =
     when (Character.getType(codePoint).toByte()) {
@@ -200,7 +142,23 @@ private fun isRtlCodePoint(codePoint: Int): Boolean = when {
     else -> false
 }
 
-/** Last strong direction scanning left from just before [utf16]; null if none. */
+/** First strong direction scanning right from [utf16]; null if none. */
+private fun firstStrongDirectionAfter(text: String, utf16: Int): ResolvedTextDirection? {
+    var index = utf16
+    while (index < text.length) {
+        strongCharDirection(text, index)?.let { return it }
+        index += Character.charCount(text.codePointAt(index))
+    }
+    return null
+}
+
+/**
+ * Last strong direction scanning left from just before [utf16]; null if none.
+ * Used by the trailing-blank rebuild in [caretXIn] to learn the trailing run's
+ * own direction (the rule for a trailing blank: the strong char is only on the
+ * caret's left, so the direction is that run's, independent of any keyboard
+ * language signal).
+ */
 private fun lastStrongDirectionBefore(text: String, utf16: Int): ResolvedTextDirection? {
     var index = utf16 - 1
     while (index >= 0) {
@@ -213,22 +171,13 @@ private fun lastStrongDirectionBefore(text: String, utf16: Int): ResolvedTextDir
     return null
 }
 
-/** First strong direction scanning right from [utf16]; null if none. */
-private fun firstStrongDirectionAfter(text: String, utf16: Int): ResolvedTextDirection? {
-    var index = utf16
-    while (index < text.length) {
-        strongCharDirection(text, index)?.let { return it }
-        index += Character.charCount(text.codePointAt(index))
-    }
-    return null
-}
-
 /**
- * The contiguous run of direction-neutral characters touching UTF-16 [utf16],
- * as an inclusive [kotlin.ranges.IntRange], or null when [utf16] is not on a
- * neutral run. If the caret is just past end-of-text, the run is the maximal
- * neutral tail ending at [utf16]. Only plain space, NBSP and ZWSP are treated
- * as neutral here (interior whitespace is already placed by the platform).
+ * The contiguous run of direction-neutral blank characters touching UTF-16
+ * [utf16], as an inclusive [kotlin.ranges.IntRange], or null when [utf16] is
+ * not on a neutral run. If the caret is just past end-of-text, the run is the
+ * maximal neutral tail ending at [utf16]. Only plain space, NBSP and ZWSP are
+ * treated as neutral here (interior whitespace is already placed by the
+ * platform).
  */
 internal fun neutralRunAtCaret(text: String, caretUtf16: Int): IntRange? {
     fun isNeutral(index: Int) = index in 0 until text.length &&
@@ -291,7 +240,6 @@ internal fun steadyCaretSpot(
     leftMarginPx: Float,
     textStyle: TextStyle,
     textMeasurer: TextMeasurer,
-    inputDirection: ResolvedTextDirection?,
 ): CaretSpot {
     val row = cursor.row.toInt().coerceIn(0, rebuilt.rowLayouts.lastIndex)
     val layout = rebuilt.rowLayouts[row]
@@ -313,7 +261,7 @@ internal fun steadyCaretSpot(
         caretRect.top
     }
     return CaretSpot(
-        x = caretXIn(layout, utf16, leftMarginPx, textStyle, textMeasurer, inputDirection),
+        x = caretXIn(layout, utf16, leftMarginPx, textStyle, textMeasurer),
         y = rebuilt.rowTops[row] + top,
     )
 }
