@@ -377,11 +377,25 @@ fun EditorComponent(
         Offset(session.scrollX(), session.scrollY())
     }
 
+    // The caret rendered while the IME is composing comes from
+    // `composingCaretOffset` (instant, no tween — see below). The instant a
+    // composing run commits (Space/punctuation after an autocorrected word,
+    // most commonly), rendering falls over to this animated value instead,
+    // starting a glide toward the new `steadyCaret.x` from whatever it last
+    // held — for a single space-width step that glide reads as "the caret
+    // didn't move" (and the reverse switch, on Backspace re-entering a
+    // composing run, reads as a snap). Force a snap across exactly that
+    // composing → committed edge, same as the pinch does, so the visible
+    // caret never has to animate across a pipeline switch, only within one.
+    var wasComposing by remember { mutableStateOf(false) }
+    val justCommitted = wasComposing && composingText == null
+    wasComposing = composingText != null
+
     // The caret tween snaps instantly during a pinch (sora skips caret
     // animation while the size is changing) and resumes after.
     val animatedCaretX by animateFloatAsState(
         targetValue = steadyCaret.x,
-        animationSpec = if (scaling) tween(0) else tween(EditorDimensions.CARET_MOVE_ANIMATION_MS),
+        animationSpec = if (scaling || justCommitted) tween(0) else tween(EditorDimensions.CARET_MOVE_ANIMATION_MS),
         label = "caretX",
     )
 
