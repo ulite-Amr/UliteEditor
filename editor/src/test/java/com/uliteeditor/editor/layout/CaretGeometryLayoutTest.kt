@@ -76,9 +76,9 @@ class CaretGeometryLayoutTest {
         val xEof = caretXIn(layout, 6, 0f)
 
         // RTL: the caret moves LEFT (negative) as it steps through the trailing
-        // blank. Asserting the SIGN (not abs) is what pins the RTL mirror in
-        // caretXIn (layout.size.width - anchorRect.right - advance): a sign
-        // flip there would otherwise pass an abs() magnitude check.
+        // blank. Asserting the SIGN (not abs) is what pins RTL direction: a
+        // caretXIn that ever placed RTL carets on the wrong side (e.g. a
+        // resurrected mirror) would flip the sign and fail the test.
         assertTrue(
             "RTL caret must move left through the trailing blank: " +
                 "xStrong=$xStrong xSpace=$xSpace xEof=$xEof",
