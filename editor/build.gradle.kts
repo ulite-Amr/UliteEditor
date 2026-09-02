@@ -71,5 +71,6 @@ dependencies {
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.compose.ui.test.junit4)
+    testImplementation(libs.compose.ui.test)
     debugImplementation(libs.compose.ui.test.manifest)
 }
