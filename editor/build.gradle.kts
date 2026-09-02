@@ -33,6 +33,14 @@ android {
         compose = true
     }
 
+    testOptions {
+        unitTests {
+            // Robolectric needs the APK resources/manifest to load the app's
+            // themes and set up the Compose text environment on the JVM.
+            isIncludeAndroidResources = true
+        }
+    }
+
     lint {
         // Path-scopes NewApi off the UniFFI-generated bindings (see lint.xml).
         lintConfig = file("lint.xml")
@@ -55,4 +63,13 @@ dependencies {
     // bundles the Android natives JNA needs at runtime).
     implementation("net.java.dev.jna:jna:5.19.1@aar")
     testImplementation(libs.junit)
+    // Robolectric runs a real Android/Compose text layout on the JVM so these
+    // tests can exercise caretXIn's pixel formula against an actual
+    // TextLayoutResult (the pure-JVM tests cover only the classification
+    // helpers; this beats the gap). @Config(sdk=[34]) keeps JDK 17 running.
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.compose.ui.test.junit4)
+    debugImplementation(libs.compose.ui.test.manifest)
 }
