@@ -222,11 +222,13 @@ class CaretGeometryLayoutTest {
 
     @Test
     fun endOfTextTrailingArabicStaysOnTheTypedSide() {
-        // The reported symptom: caret "flies to the far side" when typing into
-        // an LTR paragraph that has grown a trailing Arabic run. In an LTR
-        // paragraph the trailing RTL run lays out with its logical-last char
-        // leftmost, so the caret after end-of-text sits visually just past the
-        // LTR prefix ("abc") — never out at the far right of the run.
+        // End-of-text in an LTR paragraph that ends in an RTL run: the paragraph
+        // base is LTR, so the logical end maps to the paragraph's right edge —
+        // the caret after "abcمرحبا" sits out at the far right, which is the
+        // spec-correct (UBA) position, NOT "just past the prefix". (The value
+        // "just past abc" is the caret BEFORE the RTL run, logical index 3, not
+        // end-of-text.) caretXIn returns the platform's visual x as-is here — no
+        // mirror, and no rebuild (the trailing text is Arabic, not a blank run).
         lateinit var tm: TextMeasurer
         compose.setContent { tm = rememberTextMeasurer() }
         val style = TextStyle.Default
@@ -235,22 +237,25 @@ class CaretGeometryLayoutTest {
 
         val caretEnd = caretXIn(layout, text.length, 0f, style, tm, RTL)
 
-        // Font-independent, non-circular oracle: the end-of-text caret must sit
-        // at the measured width of the LTR prefix — the run's left edge. The old
-        // mirror thrust it out to ~layout.size.width (the far right).
-        val prefixWidth = tm.measure("abc", style).size.width.toFloat()
+        // The end-of-text caret must be the platform rect's left edge, i.e. the
+        // far right of this LTR paragraph with a trailing RTL run (its width is
+        // the run terminal at paragraph base level). Kept as an absolute check
+        // so a resurgent mirror (layoutWidth - rect.right) — which would push it
+        // somewhere else entirely — still fails this test.
         assertEquals(
-            "end-of-text caret in an LTR paragraph must sit just past the " +
-                "Latin prefix, not mirrored to the far side",
-            prefixWidth,
+            "end-of-text caret in an LTR paragraph must equal the platform's " +
+                "visual end (far right), not a mirrored/stray x",
+            layout.getCursorRect(text.length).left,
             caretEnd,
             ABS_EPS,
         )
-        // And it must stay clear of the right half entirely (tolerant guard).
+        // Sanity: the end-of-text caret really does land in the right half
+        // (it is the paragraph's terminal), guarding against the LTR-prefix
+        // assumption the old version of this test encoded.
         assertTrue(
-            "end-of-text caret must not be thrust into the right half " +
-                "(caretEnd=$caretEnd, half=${layout.size.width / 2})",
-            caretEnd < layout.size.width / 2,
+            "end-of-text caret must be at the paragraph's far right " +
+                "(caretEnd=$caretEnd, rightEdge=${layout.size.width})",
+            caretEnd > layout.size.width / 2,
         )
     }
 
@@ -259,7 +264,9 @@ class CaretGeometryLayoutTest {
         // The reported double-mirror: on a trailing blank after an Arabic run,
         // the old rebuild applied `layoutWidth - anchorRect.right` on TOP of the
         // already-visual anchor rect. Absolute check: the first caret onto the
-        // trailing space must sit exactly `anchorLeft - spaceWidth`, no mirror.
+        // trailing space must sit exactly `anchorLeft - (anchor char width)`,
+        // no mirror offset. The rebuild crosses the anchor char (آ here: the
+        // strong glyph the trailing blank is glued to), not the space itself.
         lateinit var tm: TextMeasurer
         compose.setContent { tm = rememberTextMeasurer() }
         val style = TextStyle.Default
@@ -267,12 +274,12 @@ class CaretGeometryLayoutTest {
         val layout = tm.measure(text, style)
 
         val anchorRectLeft = layout.getCursorRect(4).left
-        val spaceAdvance = ' '.advance(tm, style)
+        val anchorAdvance = 'ا'.advance(tm, style)
         val onSpace = caretXIn(layout, 5, 0f, style, tm, RTL)
         assertEquals(
-            "first trailing-space caret must be anchorLeft - one space width " +
-                "(no mirror offset)",
-            anchorRectLeft - spaceAdvance,
+            "first trailing-space caret must be anchorLeft - the anchor " +
+                "(alef) advance, no mirror offset",
+            anchorRectLeft - anchorAdvance,
             onSpace,
             STEP_EPS,
         )
