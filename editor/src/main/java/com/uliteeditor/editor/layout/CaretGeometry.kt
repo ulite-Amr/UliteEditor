@@ -81,9 +81,11 @@ private fun measureAdvance(tail: String, textStyle: TextStyle, textMeasurer: Tex
  * This is the single source of truth for *alignment* (where the paragraph sits
  * horizontally against the margin). The paragraph base direction never changes
  * as text is appended — the first strong char is fixed — so it is computed once
- * per row at layout time and reused by layout and caret alike. (The caret no
- * longer reads it directly: since the RTL mirror and the trailing-blank rebuild
- * were removed, the caret sits at the platform rect's left in every case.)
+ * per row at layout time and reused by layout and caret alike. (The caret does
+ * not read this value directly: the no-RTL-mirror [caretXIn] returns the
+ * platform rect's left, and the restored trailing-blank rebuild picks its sign
+ * from the trailing run's own strong char via [lastStrongDirectionBefore], so
+ * both stay consistent with a paragraph whose base direction is already fixed.)
  */
 internal fun paragraphBaseDirection(text: String): ResolvedTextDirection =
     firstStrongDirectionAfter(text, 0) ?: ResolvedTextDirection.Ltr

@@ -18,8 +18,8 @@ import org.robolectric.annotation.Config
  * Exercises [caretXIn] against a *real* [androidx.compose.ui.text.TextLayoutResult]
  * produced by the Compose [TextMeasurer] on the JVM (Robolectric). The pure-JVM
  * tests cover the paragraph-direction helpers; this file closes the gap on the
- * actual pixel formula — [caretXIn] now returns the platform rect's left edge,
- * with no mirror and no trailing-blank rebuild.
+ * actual pixel formula — [caretXIn] returns the platform rect's left edge with
+ * no RTL mirror, and rebuilds a caret on a trailing blank from the anchor char.
  *
  * The trailing-blank stepping tests (`rtlTrailingSpaceStepsByExactlyOneCharWidth`,
  * `rtlTrailingSpaceRebuildAnchorsAtPlatformRectLeft`, and their siblings) are the
