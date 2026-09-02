@@ -6,6 +6,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 
@@ -24,6 +25,7 @@ internal fun measureComposingLayout(
     textStyle: TextStyle,
     wrapWidthPx: Float,
     wrapEnabled: Boolean,
+    textAlign: TextAlign,
     textMeasurer: TextMeasurer,
 ): TextLayoutResult {
     val merged = buildAnnotatedString {
@@ -45,6 +47,7 @@ internal fun measureComposingLayout(
             maxLines = Int.MAX_VALUE,
             overflow = TextOverflow.Clip,
             constraints = Constraints(maxWidth = wrapWidthPx.toInt().coerceAtLeast(1)),
+            textAlign = textAlign,
         )
     } else {
         textMeasurer.measure(

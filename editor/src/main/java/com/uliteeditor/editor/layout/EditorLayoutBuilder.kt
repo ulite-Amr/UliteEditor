@@ -4,6 +4,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.ResolvedTextDirection
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import uniffi.ulite_editor_core.EditorSession
@@ -24,6 +26,7 @@ import uniffi.ulite_editor_core.EditorSession
 internal data class RebuiltEditorLayout(
     val rowLayouts: List<TextLayoutResult>,
     val rowTops: List<Float>,
+    val rowDirections: List<ResolvedTextDirection>,
     val contentWidthPx: Float,
     val contentHeightPx: Float,
 )
@@ -47,11 +50,23 @@ internal fun buildEditorLayout(
     val rowCount = session.rowCount().toInt()
     val rowLayouts = mutableListOf<TextLayoutResult>()
     val rowTops = mutableListOf<Float>()
+    val rowDirections = mutableListOf<ResolvedTextDirection>()
     var contentHeightPx = topMarginPx
     var maxLineWidthPx = 0f
     val wrapConstraints = Constraints(maxWidth = wrapWidthPx.toInt().coerceAtLeast(1))
     for (row in 0 until rowCount) {
         val text = session.lineText(row.toULong())
+        val direction = paragraphBaseDirection(text)
+        // Alignment is fixed per row from the paragraph's own first strong
+        // character. Explicit `Left`/`Right` (never `Start`/`End`) so the
+        // paragraph leans on its script, not the app's implicit
+        // LocalLayoutDirection (the editor is LTR-shelled and must not flip
+        // under a different device direction). Wrapped lines inherit the
+        // paragraph's alignment so an RTL paragraph soft-wraps to the right.
+        val textAlign = when (direction) {
+            ResolvedTextDirection.Rtl -> TextAlign.Right
+            ResolvedTextDirection.Ltr -> TextAlign.Left
+        }
         val layout = if (wrapEnabled) {
             textMeasurer.measure(
                 AnnotatedString(text),
@@ -60,6 +75,7 @@ internal fun buildEditorLayout(
                 maxLines = Int.MAX_VALUE,
                 overflow = TextOverflow.Clip,
                 constraints = wrapConstraints,
+                textAlign = textAlign,
             )
         } else {
             textMeasurer.measure(
@@ -72,6 +88,7 @@ internal fun buildEditorLayout(
         }
         rowLayouts += layout
         rowTops += contentHeightPx
+        rowDirections += direction
         contentHeightPx += layout.size.height
         if (!wrapEnabled) {
             maxLineWidthPx = maxOf(maxLineWidthPx, layout.size.width.toFloat())
@@ -87,6 +104,7 @@ internal fun buildEditorLayout(
     return RebuiltEditorLayout(
         rowLayouts = rowLayouts,
         rowTops = rowTops,
+        rowDirections = rowDirections,
         contentWidthPx = contentWidthPx,
         contentHeightPx = contentHeightPx,
     )
