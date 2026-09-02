@@ -259,4 +259,52 @@ class CaretGeometryTest {
     fun nbspAndZwspCountAsNeutral() {
         assertEquals(5..6, neutralRunAtCaret("مرحبا\u00A0\u200B", 7))
     }
+
+    // --- trailing-blank anchor (the caret-x rebuild target) ---
+
+    @Test
+    fun trailingSpaceAnchorsOnPrecedingStrongChar() {
+        assertEquals(4, trailingNeutralAnchorBefore("مرحبا ", 6))
+        assertEquals(4, trailingNeutralAnchorBefore("مرحبا ", 5))
+        assertEquals(3, trailingNeutralAnchorBefore("hello ", 5))
+    }
+
+    @Test
+    fun trailingMultiSpaceUnderscoreAnchorsOnStrongChar() {
+        assertEquals(4, trailingNeutralAnchorBefore("مرحبا   ", 8))
+        assertEquals(4, trailingNeutralAnchorBefore("مرحبا   ", 6))
+    }
+
+    @Test
+    fun trailingBlankAfterPunctuationAnchorsOnPunctuation() {
+        // After a trailing `!` the anchor block hugs the punctuation char,
+        // whose caret spot the platform does not flatten.
+        assertEquals(5, trailingNeutralAnchorBefore("مرحبا! ", 7))
+        assertEquals(5, trailingNeutralAnchorBefore("hello. ", 7))
+    }
+
+    @Test
+    fun trailingNbspAndZwspAnchor() {
+        assertEquals(4, trailingNeutralAnchorBefore("مرحبا\u00A0\u200B", 7))
+    }
+
+    @Test
+    fun midLineBlankRunHasNoTrailingAnchor() {
+        assertNull(trailingNeutralAnchorBefore("مرحبا مرحبا", 6))
+        assertNull(trailingNeutralAnchorBefore("hello world", 6))
+        assertNull(trailingNeutralAnchorBefore("a   b", 2))
+    }
+
+    @Test
+    fun nonBlankCaretHasNoTrailingAnchor() {
+        assertNull(trailingNeutralAnchorBefore("مرحبا", 4))
+        assertNull(trailingNeutralAnchorBefore("hello", 3))
+    }
+
+    @Test
+    fun leadingOrWhollyBlankRunHasNoTrailingAnchor() {
+        assertNull(trailingNeutralAnchorBefore("  مرحبا", 1))
+        assertNull(trailingNeutralAnchorBefore("   ", 3))
+        assertNull(trailingNeutralAnchorBefore("", 0))
+    }
 }

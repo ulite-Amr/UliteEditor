@@ -6,7 +6,6 @@ import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.ResolvedTextDirection
 import com.uliteeditor.editor.bidi.TextIndex
-import kotlin.math.abs
 import uniffi.ulite_editor_core.CursorPosition
 
 /** The caret's visual spot in content space (x includes the left margin). */
@@ -23,24 +22,27 @@ internal data class CaretSpot(val x: Float, val y: Float)
  * `TextFieldCoreModifier.getCursorRectInScroller` applies — without it an
  * Arabic run leaves its caret on the English/left side).
  *
- * A caret sitting on a direction-neutral run (a trailing Space after an Arabic
- * run, NBSP, or ZWSP) is given the neutral run's *measured* advance so the
- * caret/space advances the instant it is typed instead of being ignored until
- * the next character: the platform can resolve a trailing neutral flat
- * (UBA rule L1), returning the same spot as the run it follows, so we detect
- * that collapse and fall back to the run edge shifted by the run's real width
- * on the anchor side (LTR: +width right, RTL: −width left). When the platform
- * already advanced the caret across the neutral run, that position is used
- * as-is and no extra measure happens. The advance applies only when the caret
- * strictly follows the run (`run.first < caret`); a caret on the run's own
- * first char is an interior or line-leading position the platform already
- * places, and is returned un-shifted so single spaces between words are never
- * double-advanced.
+ * A caret facing a run of *trailing* blanks (end-of-line Space after an Arabic
+ * run, NBSP, or ZWSP) cannot trust [TextLayoutResult.getCursorRect]: the
+ * platform resolves a trailing neutral flat (UBA rule L1) and its caret spots
+ * at and past the blank run collapse onto the preceding run's edge, so the
+ * caret looks glued (a typed Space never advances it) and Backspace appears
+ * to snap across the boundary. For that one regime x is rebuilt from the
+ * stable rect at the last non-blank character before the run
+ * ([trailingNeutralAnchorBefore]) plus the *measured* advance across
+ * everything up to the caret on the anchor side (RTL: −width left, LTR:
+ * +width right). The anchor char's own advance is included, which is exactly
+ * the distance a caret crossing it must travel, so the position is correct
+ * whether or not the platform preserved the blank widths. Every other
+ * position — non-blank carets, mid-line blank runs, leading blank runs — is
+ * placed by the platform as-is.
  *
  * The anchoring scans in [caretAnchorDirection] also step past bidi-neutral
  * punctuation, digits and format controls (see [isScanNeutralCodePoint]), so
  * a trailing `!`, `؟` or digit sequence after an Arabic run inherits the RTL
- * run exactly as trailing Space does.
+ * run exactly as trailing Space does; a trailing blank run after punctuation
+ * (e.g. `مرحبا! `) anchors on the punctuation char, whose rect the platform
+ * does not flatten.
  *
  * Mirrors are decided per run from the strong character that anchors the
  * caret (script class), never from the neutral that sits on the boundary.
@@ -65,28 +67,15 @@ internal fun caretXIn(
         ResolvedTextDirection.Rtl -> layout.size.width - rect.right + leftMarginPx
         ResolvedTextDirection.Ltr -> leftMarginPx + rect.left
     }
-    // Reserve explicit width for the neutral run touching the caret when the
-    // platform collapsed it (see class doc). Only a caret that strictly
-    // *follows* the run (run.first < caret, the L1-trailing case) can be a
-    // flattened trailing neutral; a caret seated ON the run's first char (an
-    // interior or line-leading neutral) is already placed by the platform, so
-    // returning here keeps interior whitespace from being pushed a whole
-    // run-width past the true boundary.
-    val run = neutralRunAtCaret(text, caret) ?: return baseX
-    if (caret <= run.first) return baseX
-    val core16 = run.first
-    val rectCore = layout.getCursorRect(core16)
-    val coreX = when (decided) {
-        ResolvedTextDirection.Rtl -> layout.size.width - rectCore.right + leftMarginPx
-        ResolvedTextDirection.Ltr -> leftMarginPx + rectCore.left
-    }
-    // Already advanced across the run → honor the platform (no extra measure).
-    if (abs(baseX - coreX) >= 0.5f) return baseX
-    val tail = text.substring(core16, run.last + 1)
+    // Rebuild the x for a collapsed trailing-blank caret (see doc above);
+    // anything non-trailing returns the platform-rect base right away.
+    val anchor = trailingNeutralAnchorBefore(text, caret) ?: return baseX
+    val tail = text.substring(anchor, caret)
     val advance = measureAdvance(tail, textStyle, textMeasurer)
+    val anchorRect = layout.getCursorRect(anchor)
     return when (decided) {
-        ResolvedTextDirection.Rtl -> coreX - advance
-        ResolvedTextDirection.Ltr -> coreX + advance
+        ResolvedTextDirection.Rtl -> layout.size.width - anchorRect.right + leftMarginPx - advance
+        ResolvedTextDirection.Ltr -> leftMarginPx + anchorRect.left + advance
     }
 }
 
@@ -246,6 +235,23 @@ internal fun neutralRunAtCaret(text: String, caretUtf16: Int): IntRange? {
     return if (endExclusive > start) start..(endExclusive - 1) else null
 }
 
+/**
+ * The index of the character that visually anchors a caret facing a *trailing*
+ * blank run (Space/NBSP/ZWSP): the last non-blank char directly before the
+ * run, or null when [caret] does not face one. A trailing blank run reaches
+ * end-of-text, so the caret at or past the run's first char is on the L1
+ * flattening zone [caretXIn] rebuilds; a run that does not reach end-of-text
+ * (mid-line) or starts at 0 (wholly-blank line) has no such flattening and
+ * returns null. [caret] is clamped to [text]'s length so an end-of-text caret
+ * reports the run's anchor.
+ */
+internal fun trailingNeutralAnchorBefore(text: String, caret: Int): Int? {
+    val run = neutralRunAtCaret(text, caret.coerceIn(0, text.length)) ?: return null
+    if (run.last != text.length - 1) return null
+    val anchor = run.first - 1
+    return if (anchor >= 0) anchor else null
+}
+
 /** Y offset of the caret inside [layout] at UTF-16 [utf16], relative to the row's own top. */
 internal fun caretTopIn(layout: TextLayoutResult, utf16: Int): Float =
     layout.getCursorRect(utf16).top
@@ -267,13 +273,25 @@ internal fun steadyCaretSpot(
 ): CaretSpot {
     val row = cursor.row.toInt().coerceIn(0, rebuilt.rowLayouts.lastIndex)
     val layout = rebuilt.rowLayouts[row]
+    val rowText = layout.layoutInput.text.text
     val utf16 = TextIndex.utf16IndexAtByteOffset(
-        layout.layoutInput.text.text,
+        rowText,
         cursor.column.toLong(),
     )
     val caretRect = layout.getCursorRect(utf16)
+    // A collapsed trailing-blank caret keeps its own rect's line (the blank
+    // run owns a visual line when it wraps), but when the caret rect's line
+    // and the trailing anchor's line tie for the caret, prefer the *lower* of
+    // the two rows so the caret never floats to a neighbor line's leading
+    // character (wrapped trailing-whitespace misalignment).
+    val anchorBefore = trailingNeutralAnchorBefore(rowText, utf16)
+    val top = if (anchorBefore != null) {
+        maxOf(caretRect.top, layout.getCursorRect(anchorBefore).top)
+    } else {
+        caretRect.top
+    }
     return CaretSpot(
         x = caretXIn(layout, utf16, leftMarginPx, textStyle, textMeasurer, inputDirection),
-        y = rebuilt.rowTops[row] + caretTopIn(layout, utf16),
+        y = rebuilt.rowTops[row] + top,
     )
 }
