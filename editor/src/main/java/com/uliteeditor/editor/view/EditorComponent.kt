@@ -231,8 +231,10 @@ fun EditorComponent(
         cursor,
         imeSelectionTick,
         leftMarginPx,
+        textStyle,
+        textMeasurer,
     ) {
-        steadyCaretSpot(rebuilt, cursor, leftMarginPx)
+        steadyCaretSpot(rebuilt, cursor, leftMarginPx, textStyle, textMeasurer)
     }
 
     // While the IME holds text in composition (autocorrect / suggestions /
@@ -282,7 +284,13 @@ fun EditorComponent(
         val composingEndUtf16 = (caretRowUtf16 + composingText.length)
             .coerceIn(0, composingLayout.layoutInput.text.text.length)
         CaretSpot(
-            x = caretXIn(composingLayout, composingEndUtf16, leftMarginPx),
+            x = caretXIn(
+                composingLayout,
+                composingEndUtf16,
+                leftMarginPx,
+                textStyle,
+                textMeasurer,
+            ),
             y = caretRowFirstTop + caretTopIn(composingLayout, composingEndUtf16),
         )
     } else {

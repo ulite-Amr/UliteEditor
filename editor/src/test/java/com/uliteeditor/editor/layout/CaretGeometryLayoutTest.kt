@@ -51,9 +51,9 @@ class CaretGeometryLayoutTest {
         val text = "hello "
         val layout = tm.measure(text, style)
 
-        val xStrong = caretXIn(layout, 4, 0f)
-        val xSpace = caretXIn(layout, 5, 0f)
-        val xEof = caretXIn(layout, 6, 0f)
+        val xStrong = caretXIn(layout, 4, 0f, style, tm)
+        val xSpace = caretXIn(layout, 5, 0f, style, tm)
+        val xEof = caretXIn(layout, 6, 0f, style, tm)
 
         assertNotEquals("caret must leave the strong char", xStrong, xSpace)
         assertNotEquals("caret must advance onto the trailing space", xSpace, xEof)
@@ -71,9 +71,9 @@ class CaretGeometryLayoutTest {
         val text = "مرحبا "
         val layout = tm.measure(text, style)
 
-        val xStrong = caretXIn(layout, 4, 0f)
-        val xSpace = caretXIn(layout, 5, 0f)
-        val xEof = caretXIn(layout, 6, 0f)
+        val xStrong = caretXIn(layout, 4, 0f, style, tm)
+        val xSpace = caretXIn(layout, 5, 0f, style, tm)
+        val xEof = caretXIn(layout, 6, 0f, style, tm)
 
         // RTL: the caret moves LEFT (negative) as it steps through the trailing
         // blank. Asserting the SIGN (not abs) is what pins RTL direction: a
@@ -95,7 +95,7 @@ class CaretGeometryLayoutTest {
         val style = TextStyle.Default
         val text = "hello   "
         val layout = tm.measure(text, style)
-        val xs = (4..8).map { caretXIn(layout, it, 0f) }
+        val xs = (4..8).map { caretXIn(layout, it, 0f, style, tm) }
 
         assertEquals('o'.advance(tm, style), xs[1] - xs[0], STEP_EPS)
         for (i in 1 until xs.lastIndex) {
@@ -111,8 +111,8 @@ class CaretGeometryLayoutTest {
         val text = "hello. "
         val layout = tm.measure(text, style)
 
-        val onSpace = caretXIn(layout, 6, 0f)
-        val onEof = caretXIn(layout, 7, 0f)
+        val onSpace = caretXIn(layout, 6, 0f, style, tm)
+        val onEof = caretXIn(layout, 7, 0f, style, tm)
         assertNotEquals("trailing blank after punctuation must still advance", onSpace, onEof)
         assertEquals(' '.advance(tm, style), onEof - onSpace, STEP_EPS)
     }
@@ -125,8 +125,8 @@ class CaretGeometryLayoutTest {
         val text = "\uD83D\uDE00 "
         val layout = tm.measure(text, style)
 
-        val onPair = caretXIn(layout, 2, 0f)
-        val onSpace = caretXIn(layout, 3, 0f)
+        val onPair = caretXIn(layout, 2, 0f, style, tm)
+        val onSpace = caretXIn(layout, 3, 0f, style, tm)
         assertNotEquals("pair caret and trailing-space caret must differ", onPair, onSpace)
         assertEquals(' '.advance(tm, style), onSpace - onPair, STEP_EPS)
     }
@@ -139,7 +139,7 @@ class CaretGeometryLayoutTest {
         val text = "a   b"
         val layout = tm.measure(text, style)
 
-        val caret2 = caretXIn(layout, 2, 0f)
+        val caret2 = caretXIn(layout, 2, 0f, style, tm)
         assertEquals(layout.getCursorRect(2).left, caret2, STEP_EPS)
     }
 
@@ -151,7 +151,7 @@ class CaretGeometryLayoutTest {
         val text = "  x"
         val layout = tm.measure(text, style)
 
-        val caret1 = caretXIn(layout, 1, 0f)
+        val caret1 = caretXIn(layout, 1, 0f, style, tm)
         assertEquals(layout.getCursorRect(1).left, caret1, STEP_EPS)
     }
 
@@ -169,8 +169,8 @@ class CaretGeometryLayoutTest {
         // the caret must still step one space-width at a time, not flatten.
         // RTL: moves left (negative) on the wrapped line.
         val len = text.length
-        val xBefore = caretXIn(layout, len - 1, 0f)
-        val xEof = caretXIn(layout, len, 0f)
+        val xBefore = caretXIn(layout, len - 1, 0f, style, tm)
+        val xEof = caretXIn(layout, len, 0f, style, tm)
         assertTrue("wrapped trailing caret must move left", xEof < xBefore)
         assertEquals(-' '.advance(tm, style), xEof - xBefore, WRAP_EPS)
     }
@@ -180,7 +180,7 @@ class CaretGeometryLayoutTest {
         lateinit var tm: TextMeasurer
         compose.setContent { tm = rememberTextMeasurer() }
         val layout = tm.measure("", TextStyle.Default)
-        assertEquals(7f, caretXIn(layout, 0, 7f), STEP_EPS)
+        assertEquals(7f, caretXIn(layout, 0, 7f, TextStyle.Default, tm), STEP_EPS)
     }
 
     @Test
@@ -192,8 +192,8 @@ class CaretGeometryLayoutTest {
         val layout = tm.measure(text, style)
 
         // A caret beyond end-of-text must match the caret exactly at end-of-text.
-        val atEnd = caretXIn(layout, 6, 0f)
-        val beyondEnd = caretXIn(layout, 999, 0f)
+        val atEnd = caretXIn(layout, 6, 0f, style, tm)
+        val beyondEnd = caretXIn(layout, 999, 0f, style, tm)
         assertEquals(atEnd, beyondEnd, STEP_EPS)
     }
 
@@ -216,7 +216,7 @@ class CaretGeometryLayoutTest {
         val layout = tm.measure(text, style)
 
         // Caret on the Arabic 'م' (logical index 3), an RTL strong char.
-        val caretX = caretXIn(layout, 3, 0f)
+        val caretX = caretXIn(layout, 3, 0f, style, tm)
         assertEquals(
             "RTL caret must sit at the platform rect's VISUAL left edge, " +
                 "not mirrored against layout.size.width",
@@ -239,7 +239,7 @@ class CaretGeometryLayoutTest {
         val text = "abcمرحبا"
         val layout = tm.measure(text, style)
 
-        val caretEnd = caretXIn(layout, text.length, 0f)
+        val caretEnd = caretXIn(layout, text.length, 0f, style, tm)
 
         // Font-independent, non-circular oracle: the end-of-text caret must sit
         // at the measured width of the LTR prefix — the run's left edge. The old
@@ -264,8 +264,11 @@ class CaretGeometryLayoutTest {
     fun rtlTrailingSpaceRebuildAnchorsAtPlatformRectLeft() {
         // The reported double-mirror: on a trailing blank after an Arabic run,
         // the old rebuild applied `layoutWidth - anchorRect.right` on TOP of the
-        // already-visual anchor rect. Absolute check: the first caret onto the
-        // trailing space must sit exactly `anchorLeft - spaceWidth`, no mirror.
+        // already-visual anchor rect. Absolute check: the caret at the first
+        // position onto the trailing run crosses the anchor char `ا`, so the
+        // rebuilt x must sit exactly `anchorLeft - width(ا)` — a small value
+        // just left of the anchor, nowhere near the far-right side a mirror
+        // would thrust it to.
         lateinit var tm: TextMeasurer
         compose.setContent { tm = rememberTextMeasurer() }
         val style = TextStyle.Default
@@ -273,12 +276,12 @@ class CaretGeometryLayoutTest {
         val layout = tm.measure(text, style)
 
         val anchorRectLeft = layout.getCursorRect(4).left
-        val spaceAdvance = ' '.advance(tm, style)
-        val onSpace = caretXIn(layout, 5, 0f)
+        val alefAdvance = 'ا'.advance(tm, style)
+        val onSpace = caretXIn(layout, 5, 0f, style, tm)
         assertEquals(
-            "first trailing-space caret must be anchorLeft - one space width " +
+            "first trailing-space caret must be anchorLeft - one alef width " +
                 "(no mirror offset)",
-            anchorRectLeft - spaceAdvance,
+            anchorRectLeft - alefAdvance,
             onSpace,
             STEP_EPS,
         )
