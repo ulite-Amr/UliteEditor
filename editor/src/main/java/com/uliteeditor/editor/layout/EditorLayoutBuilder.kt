@@ -70,12 +70,11 @@ internal fun buildEditorLayout(
         val layout = if (wrapEnabled) {
             textMeasurer.measure(
                 AnnotatedString(text),
-                textStyle,
+                textStyle.copy(textAlign = textAlign),
                 softWrap = true,
                 maxLines = Int.MAX_VALUE,
                 overflow = TextOverflow.Clip,
                 constraints = wrapConstraints,
-                textAlign = textAlign,
             )
         } else {
             textMeasurer.measure(

@@ -16,6 +16,11 @@ import androidx.compose.ui.unit.Constraints
  * [composing] is the IME's live composing text (already capped at the first
  * newline by the caller); the engine buffer stays unchanged until the span is
  * released, and this preview vanishes the moment the IME commits.
+ *
+ * [textAlign] mirrors the caret row's own paragraph alignment so the preview
+ * leans on the same side as the real row it replaces; it is applied to a copy
+ * of [textStyle] (alignment is a `TextStyle` property — `TextMeasurer.measure`
+ * has no `textAlign` parameter), in the wrapped branch only.
  */
 internal fun measureComposingLayout(
     row: String,
@@ -42,12 +47,11 @@ internal fun measureComposingLayout(
     return if (wrapEnabled) {
         textMeasurer.measure(
             merged,
-            textStyle,
+            textStyle.copy(textAlign = textAlign),
             softWrap = true,
             maxLines = Int.MAX_VALUE,
             overflow = TextOverflow.Clip,
             constraints = Constraints(maxWidth = wrapWidthPx.toInt().coerceAtLeast(1)),
-            textAlign = textAlign,
         )
     } else {
         textMeasurer.measure(
