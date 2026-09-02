@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.testing.Test
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -44,6 +46,20 @@ android {
     lint {
         // Path-scopes NewApi off the UniFFI-generated bindings (see lint.xml).
         lintConfig = file("lint.xml")
+    }
+}
+
+// The operator never builds locally (hard AGENTS rule); CI is the only place
+// these JVM/Robolectric tests run, so surface assertion failures' actual vs
+// expected values (and stdout) in CI logs for debugging geometry tests without
+// a local toolchain. Configured via withType<Test>() (not the AGP
+// `unitTests.all { test -> }` closure, whose receiver type the Kotlin DSL does
+// not resolve under AGP 9 — it failed with "Unresolved reference 'testLogging'").
+tasks.withType<Test>().configureEach {
+    testLogging {
+        events("failed", "skipped")
+        exceptionFormat = TestExceptionFormat.FULL
+        showStandardStreams = true
     }
 }
 

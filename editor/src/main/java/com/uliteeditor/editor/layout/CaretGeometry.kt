@@ -17,10 +17,18 @@ internal data class CaretSpot(val x: Float, val y: Float)
  * The computed x is the run edge for the direction returned by
  * [caretAnchorDirection] ([inputDirection] is the active keyboard language, so
  * a caret on a BiDi run boundary hugs the side you are actually typing into):
- * LTR caret at the rect's left edge, RTL caret mirrored against the layout's
- * right edge (`layoutWidth - caretRect.right`, the same mirror androidx
- * `TextFieldCoreModifier.getCursorRectInScroller` applies — without it an
- * Arabic run leaves its caret on the English/left side).
+ * the caret sits at the rect's left edge in every case. There is deliberately
+ * **no** RTL mirror (no `layoutWidth - rect.right`): Compose already resolves
+ * bidi internally, so [TextLayoutResult.getCursorRect] returns the caret's
+ * visual x for an RTL run just as it does for an LTR one. The old mirror was
+ * lifted from androidx `TextFieldCoreModifier.getCursorRectInScroller`, which
+ * serves a single-line, horizontally scrolling, `LayoutDirection.Ltr`-forced
+ * scroller container — none of which this plain, multi-line, unfixed-direction
+ * Text has. Applying that mirror here double-inverted a position that was
+ * already correct: it only appeared right on paragraphs that were entirely
+ * base-RTL (where the inversion cancels), and was wrong for a paragraph that
+ * began LTR and later gained Arabic, or on a trailing blank after an Arabic
+ * run (where the inversion was effectively applied twice).
  *
  * A caret facing a run of *trailing* blanks (end-of-line Space after an Arabic
  * run, NBSP, or ZWSP) cannot trust [TextLayoutResult.getCursorRect]: the
@@ -46,11 +54,12 @@ internal data class CaretSpot(val x: Float, val y: Float)
  * (e.g. `مرحبا! `) anchors on the punctuation char, whose rect the platform
  * does not flatten.
  *
- * Mirrors are decided per run from the strong character that anchors the
- * caret (script class), never from the neutral that sits on the boundary.
- * A mid-line RTL run that is *not* trailing keeps an absolute glyph position,
- * and the mirror for such a spot is an approximation of the right-edge
- * convention, not a bug.
+ * Direction is the caret's travel direction only — it decides the *sign* of
+ * the trailing-blank rebuild's measured advance (RTL walks left/−, LTR walks
+ * right/+), never which side of the platform rect to take. The rect's left edge
+ * is the anchor in every case. (Direction is decided per run from the strong
+ * character that anchors the caret — script class — never from the neutral
+ * that sits on the boundary.)
  */
 internal fun caretXIn(
     layout: TextLayoutResult,
@@ -65,20 +74,26 @@ internal fun caretXIn(
     val caret = utf16.coerceIn(0, text.length)
     val decided = caretAnchorDirection(text, caret, inputDirection)
     val rect = layout.getCursorRect(caret)
-    val baseX = when (decided) {
-        ResolvedTextDirection.Rtl -> layout.size.width - rect.right + leftMarginPx
-        ResolvedTextDirection.Ltr -> leftMarginPx + rect.left
-    }
+    // No direction mirror here: Compose already resolves bidi internally, so
+    // [TextLayoutResult.getCursorRect] returns the caret's *visual* x, for RTL
+    // runs just the same as LTR. The old `layoutWidth - rect.right` mirror was
+    // lifted from androidx TextField's single-line, horizontally-scrolling,
+    // LayoutDirection.Ltr-forced scroller container — none of which this plain
+    // multi-line Text has — so it double-inverted a position that was already
+    // correct, except it "accidentally" cancelled out on paragraphs that were
+    // entirely base-RTL. Both directions just take the platform rect's left.
+    val baseX = leftMarginPx + rect.left
     // Rebuild the x for a collapsed trailing-blank caret (see doc above);
     // anything non-trailing returns the platform-rect base right away.
     val anchor = trailingNeutralAnchorBefore(text, caret) ?: return baseX
     val tail = text.substring(anchor, caret)
     val advance = measureAdvance(tail, textStyle, textMeasurer)
     val anchorRect = layout.getCursorRect(anchor)
-    return when (decided) {
-        ResolvedTextDirection.Rtl -> layout.size.width - anchorRect.right + leftMarginPx - advance
-        ResolvedTextDirection.Ltr -> leftMarginPx + anchorRect.left + advance
-    }
+    // Rebuild still pins the caret's *magnitude* to the measured advance; only
+    // its sign differs by the caret's travel direction (RTL walks left/−,
+    // LTR walks right/+). The anchor side is the platform rect's left either
+    // way — no mirror.
+    return leftMarginPx + anchorRect.left + (if (decided == ResolvedTextDirection.Rtl) -advance else advance)
 }
 
 private fun measureAdvance(tail: String, textStyle: TextStyle, textMeasurer: TextMeasurer): Float {

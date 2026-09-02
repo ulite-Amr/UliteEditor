@@ -191,11 +191,108 @@ class CaretGeometryLayoutTest {
         assertEquals(atEnd, beyondEnd, STEP_EPS)
     }
 
+    // The maintainer's core complaint about the original suite: it asserted only
+    // *deltas* (step widths / signs), so an RTL mirror bug — which shifts every
+    // caret x by the *same constant*, `layoutWidth - rect.right - rect.left`,
+    // cancelling out of any difference or sign — could never be caught. These
+    // tests pin the carets' *absolute* placement against the platform rect,
+    // which is what the mirror corrupted.
+
+    @Test
+    fun rtlRunCaretUsesPlatformRectLeftNotMirror() {
+        // A paragraph that BEGINS with Latin (base LTR) then gains an embedded
+        // Arabic run. This is a reported-bug shape: the old mirror pushed a
+        // caret inside the Arabic run to the far side of the box.
+        lateinit var tm: TextMeasurer
+        compose.setContent { tm = rememberTextMeasurer() }
+        val style = TextStyle.Default
+        val text = "abcمرحبا"
+        val layout = tm.measure(text, style)
+
+        // Caret on the Arabic 'م' (logical index 3), an RTL strong char.
+        val caretX = caretXIn(layout, 3, 0f, style, tm, RTL)
+        assertEquals(
+            "RTL caret must sit at the platform rect's VISUAL left edge, " +
+                "not mirrored against layout.size.width",
+            layout.getCursorRect(3).left,
+            caretX,
+            STEP_EPS,
+        )
+    }
+
+    @Test
+    fun endOfTextTrailingArabicStaysOnTheTypedSide() {
+        // End-of-text in an LTR paragraph that ends in an RTL run: the paragraph
+        // base is LTR, so the logical end maps to the paragraph's right edge —
+        // the caret after "abcمرحبا" sits out at the far right, which is the
+        // spec-correct (UBA) position, NOT "just past the prefix". (The value
+        // "just past abc" is the caret BEFORE the RTL run, logical index 3, not
+        // end-of-text.) caretXIn returns the platform's visual x as-is here — no
+        // mirror, and no rebuild (the trailing text is Arabic, not a blank run).
+        lateinit var tm: TextMeasurer
+        compose.setContent { tm = rememberTextMeasurer() }
+        val style = TextStyle.Default
+        val text = "abcمرحبا"
+        val layout = tm.measure(text, style)
+
+        val caretEnd = caretXIn(layout, text.length, 0f, style, tm, RTL)
+
+        // The end-of-text caret must be the platform rect's left edge, i.e. the
+        // far right of this LTR paragraph with a trailing RTL run (its width is
+        // the run terminal at paragraph base level). Kept as an absolute check
+        // so a resurgent mirror (layoutWidth - rect.right) — which would push it
+        // somewhere else entirely — still fails this test.
+        assertEquals(
+            "end-of-text caret in an LTR paragraph must equal the platform's " +
+                "visual end (far right), not a mirrored/stray x",
+            layout.getCursorRect(text.length).left,
+            caretEnd,
+            ABS_EPS,
+        )
+        // Sanity: the end-of-text caret really does land in the right half
+        // (it is the paragraph's terminal), guarding against the LTR-prefix
+        // assumption the old version of this test encoded.
+        assertTrue(
+            "end-of-text caret must be at the paragraph's far right " +
+                "(caretEnd=$caretEnd, rightEdge=${layout.size.width})",
+            caretEnd > layout.size.width / 2,
+        )
+    }
+
+    @Test
+    fun rtlTrailingSpaceRebuildAnchorsAtPlatformRectLeft() {
+        // The reported double-mirror: on a trailing blank after an Arabic run,
+        // the old rebuild applied `layoutWidth - anchorRect.right` on TOP of the
+        // already-visual anchor rect. Absolute check: the first caret onto the
+        // trailing space must sit exactly `anchorLeft - (anchor char width)`,
+        // no mirror offset. The rebuild crosses the anchor char (آ here: the
+        // strong glyph the trailing blank is glued to), not the space itself.
+        lateinit var tm: TextMeasurer
+        compose.setContent { tm = rememberTextMeasurer() }
+        val style = TextStyle.Default
+        val text = "مرحبا "
+        val layout = tm.measure(text, style)
+
+        val anchorRectLeft = layout.getCursorRect(4).left
+        val anchorAdvance = 'ا'.advance(tm, style)
+        val onSpace = caretXIn(layout, 5, 0f, style, tm, RTL)
+        assertEquals(
+            "first trailing-space caret must be anchorLeft - the anchor " +
+                "(alef) advance, no mirror offset",
+            anchorRectLeft - anchorAdvance,
+            onSpace,
+            STEP_EPS,
+        )
+    }
+
     private companion object {
         val LTR = ResolvedTextDirection.Ltr
         val RTL = ResolvedTextDirection.Rtl
         const val STEP_EPS = 0.5f
         // Wrapped lines round differently; be a touch more lenient there.
         const val WRAP_EPS = 2.0f
+        // Absolute cross-measure comparisons (an isolated run measured on its
+        // own vs the same glyphs embedded) can differ slightly; be lenient.
+        const val ABS_EPS = 2.0f
     }
 }
