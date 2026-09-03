@@ -53,7 +53,15 @@ internal fun buildEditorLayout(
     val rowDirections = mutableListOf<ResolvedTextDirection>()
     var contentHeightPx = topMarginPx
     var maxLineWidthPx = 0f
-    val wrapConstraints = Constraints(maxWidth = wrapWidthPx.toInt().coerceAtLeast(1))
+    // A fixed-width constraint (min == max) makes TextMeasurer lay the
+    // paragraph out across the full wrap width instead of collapsing the box
+    // to the line's own content width. Inside a content-sized box TextAlign
+    // is geometrically inert (a single non-wrapping line fills the whole
+    // box), so an RTL paragraph would sit at the left with Left and Right
+    // indistinguishable; bounding the box to the full width lets the row's
+    // explicit alignment actually lean on its script.
+    val wrapWidthInt = wrapWidthPx.toInt().coerceAtLeast(1)
+    val wrapConstraints = Constraints(minWidth = wrapWidthInt, maxWidth = wrapWidthInt)
     for (row in 0 until rowCount) {
         val text = session.lineText(row.toULong())
         val direction = paragraphBaseDirection(text)

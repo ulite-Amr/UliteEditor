@@ -45,13 +45,17 @@ internal fun measureComposingLayout(
         append(row.substring(caretUtf16))
     }
     return if (wrapEnabled) {
+        val wrapWidthInt = wrapWidthPx.toInt().coerceAtLeast(1)
+        // Fixed-width (min == max) constraint like [buildEditorLayout]: bound
+        // the preview to the full wrap width so the row's alignment leans on
+        // its script instead of being invisible inside a content-sized box.
         textMeasurer.measure(
             merged,
             textStyle.copy(textAlign = textAlign),
             softWrap = true,
             maxLines = Int.MAX_VALUE,
             overflow = TextOverflow.Clip,
-            constraints = Constraints(maxWidth = wrapWidthPx.toInt().coerceAtLeast(1)),
+            constraints = Constraints(minWidth = wrapWidthInt, maxWidth = wrapWidthInt),
         )
     } else {
         // No-wrap composing preview mirrors [buildEditorLayout]'s no-wrap row:
