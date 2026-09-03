@@ -330,16 +330,61 @@ class CaretGeometryLayoutTest {
                 "(xStart=$xStart xFirst=$xFirst xSecond=$xSecond)",
             xStart >= xFirst && xFirst >= xSecond,
         )
-        // The end-of-text caret (rightmost in RTL) must lean on the box's RIGHT
-        // half, i.e. sit clearly toward `wrapWidth`, not the left. This is the
-        // absolute pin that fails if the alignment is invisible (a content-sized
-        // box would place a ~handful-of-px-wide line left of the box's middle).
-        val xEnd = caretXIn(layout, text.length, 0f, style, tm)
+        // The interior carets above (xStart/xFirst/xSecond) equal the content's
+        // right-leaning spots; that absolute pin is what proves alignment is
+        // visible. The end-of-text caret is different: once the line is typed,
+        // the next RTL char inserts to the LEFT, so it must sit at the content's
+        // LEFT edge (getLineLeft — which shrinks as the line grows), NOT stay
+        // pinned at the box's right edge (the caret-x bug this fix resolves).
         assertTrue(
-            "wrap RTL end caret must lean on the box's right half " +
-                "(xEnd=$xEnd wrapWidth=$wrapWidth)",
-            xEnd > wrapWidth * 0.5f,
+            "wrap RTL interior carets must lean on the box's right half " +
+                "(xStart=$xStart wrapWidth=$wrapWidth)",
+            xStart > wrapWidth * 0.5f,
         )
+        val xEnd = caretXIn(layout, text.length, 0f, style, tm)
+        assertEquals(
+            "wrap RTL end caret must sit at the line's left (content) edge",
+            layout.getLineLeft(0), xEnd, ABS_EPS,
+        )
+        // And it must never sit right of the first typed char's spot (the RTL
+        // caret walks monotonically left as the logical index reaches the end).
+        assertTrue(
+            "wrap RTL end caret must sit at-left-of the interior spots " +
+                "(xEnd=$xEnd xStart=$xStart)",
+            xEnd <= xStart,
+        )
+    }
+
+    @Test
+    fun rtlEndOfTextCaretTracksLineLeft() {
+        // The B3/B4 caret bug: at end-of-text on a right-aligned RTL paragraph
+        // (no trailing blank, so no rebuild), the platform's primary horizontal
+        // is pinned to the box's RIGHT edge (lineRight). The caret must instead
+        // sit at the content's LEFT edge (lineLeft, which decreases as RTL text
+        // grows) so typing Arabic moves the caret left. getHorizontalPosition is
+        // a no-op here (same native call as getCursorRect on Android), so this
+        // pins the getLineLeft-based correction in caretXIn.
+        lateinit var tm: TextMeasurer
+        compose.setContent { tm = rememberTextMeasurer() }
+        val style = TextStyle.Default.copy(textAlign = TextAlign.Right)
+        val wrapWidth = 200
+        val text = "اهلا"
+        val layout = tm.measure(
+            text, style,
+            softWrap = true,
+            constraints = Constraints(minWidth = wrapWidth, maxWidth = wrapWidth),
+        )
+
+        val lineLeft = layout.getLineLeft(0)
+        val lineRight = layout.getLineRight(0)
+        val xEnd = caretXIn(layout, text.length, 0f, style, tm)
+
+        // The end-of-text caret must sit at the line's LEFT edge (content), not
+        // be pinned at the box right edge — and it must be strictly left of it.
+        assertEquals("RTL end caret must equal the line's left (content) edge",
+            lineLeft, xEnd, ABS_EPS)
+        assertTrue("RTL end caret must sit left of the box's right edge " +
+            "(xEnd=$xEnd lineRight=$lineRight)", xEnd < lineRight)
     }
 
     @Test

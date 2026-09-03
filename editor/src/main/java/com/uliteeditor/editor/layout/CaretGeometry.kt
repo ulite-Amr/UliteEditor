@@ -26,12 +26,30 @@ internal data class CaretDiagnostics(
 /**
  * X, in content space, of the caret at UTF-16 [utf16] inside [layout].
  *
- * The caret sits at the platform rect's left edge in every case — there is
+ * The caret usually sits at the platform rect's left edge — there is
  * deliberately **no** RTL mirror (no `layoutWidth - rect.right`). Compose
  * already resolves bidi internally, so [TextLayoutResult.getCursorRect]
  * returns the caret's *visual* x for an RTL run just as it does for an LTR
  * one. Paragraph alignment (which side of the viewport a run leans on) is
  * applied at layout time in [buildEditorLayout], not here.
+ *
+ * One position is not trusted: the caret at the terminal offset (`utf16 ==
+ * text.length`) of a whole-RTL paragraph. For a right-aligned RTL row that
+ * row's platform primary horizontal is pinned to the box's RIGHT edge (the
+ * fixed lineRight), so the caret would stay stuck near the right edge while
+ * typing instead of tracking the content's left edge (lineLeft, which
+ * decreases as RTL text grows). Compose's
+ * `getHorizontalPosition(offset, usePrimaryDirection = true)` returns the
+ * same value the same native call `getCursorRect` does on Android
+ * (`TextLayout.getPrimaryHorizontal`), so it cannot fix this; the natural
+ * insertion point for an RTL paragraph is its line's LEFT edge, which we take
+ * from [TextLayoutResult.getLineLeft] for the caret's line. Interior RTL
+ * positions (getCursorRect steps correctly by char width) and any LTR row
+ * (getPrimaryHorizontal already gives the content edge) are untouched. The
+ * gate is [paragraphBaseDirection] (first-strong): it must be the *content*
+ * direction, not [TextLayoutResult.getParagraphDirection], because
+ * `TextAlign.Right` coerces the resolved paragraph direction to Ltr even for
+ * Arabic text, so the latter would never match here.
  *
  * One regime is not trusted: a caret facing a *trailing* run of blanks
  * (end-of-line Space/NBSP/ZWSP). The platform resolves a trailing neutral
@@ -63,7 +81,28 @@ internal fun caretXIn(
     if (text.isEmpty()) return leftMarginPx
     val caret = utf16.coerceIn(0, text.length)
     val rect = layout.getCursorRect(caret)
-    val baseX = leftMarginPx + rect.left
+    // RTL end-of-text correction: for a right-aligned RTL paragraph the
+    // platform's primary horizontal at the paragraph's terminal offset is
+    // pinned to the box's RIGHT edge (the fixed lineRight), not the content's
+    // left edge (lineLeft, which decreases as RTL text grows). Compose's
+    // getHorizontalPosition(offset, true) returns the same value getCursorRect
+    // does on Android (same native getPrimaryHorizontal), so it can't fix this.
+    // The natural insertion point for an RTL paragraph is its line's LEFT edge,
+    // so when the caret sits at the end of a whole-RTL row we take that instead.
+    // Interior positions (getCursorRect steps by char width correctly) and any
+    // LTR row (getPrimaryHorizontal already gives the content edge) are
+    // untouched. The gate uses paragraphBaseDirection (first-strong), NOT
+    // getParagraphDirection: TextAlign.Right coerces the *resolved* paragraph
+    // direction to Ltr even when the content is Arabic, so the latter would
+    // never fire. Full formula in the doc comment above.
+    val baseX = if (
+        caret == text.length &&
+        paragraphBaseDirection(text) == ResolvedTextDirection.Rtl
+    ) {
+        leftMarginPx + layout.getLineLeft(layout.getLineForOffset(caret))
+    } else {
+        leftMarginPx + rect.left
+    }
     // Rebuild a collapsed trailing-blank caret (see doc above); every other
     // position returns the platform rect's left as-is.
     val anchor = trailingNeutralAnchorBefore(text, caret) ?: return baseX
