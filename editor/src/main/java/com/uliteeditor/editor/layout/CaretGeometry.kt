@@ -13,6 +13,17 @@ import uniffi.ulite_editor_core.CursorPosition
 internal data class CaretSpot(val x: Float, val y: Float)
 
 /**
+ * Diagnostic values extracted alongside [caretXIn] for on-device RTL
+ * debugging. Populated only when the caller needs per-keystroke telemetry;
+ * null fields indicate the diagnostic was not applicable (e.g. no trailing-
+ * blank rebuild ran).
+ */
+internal data class CaretDiagnostics(
+    /** The raw `anchorRect.left` when the trailing-blank rebuild ran, null otherwise. */
+    val anchorRectLeft: Float?,
+)
+
+/**
  * X, in content space, of the caret at UTF-16 [utf16] inside [layout].
  *
  * The caret sits at the platform rect's left edge in every case — there is
@@ -65,6 +76,31 @@ internal fun caretXIn(
     // walks right/+). The anchor side is the platform rect's left either way.
     return leftMarginPx + anchorRect.left +
         (if (anchorDirection == ResolvedTextDirection.Rtl) -advance else advance)
+}
+
+/**
+ * Same as [caretXIn] but also returns [CaretDiagnostics] for on-device
+ * telemetry. The diagnostics re-derive the trailing-blank anchor so the
+ * caller can log the raw `anchorRect.left` without duplicating the full
+ * rebuild logic.
+ */
+internal fun caretXInWithDiagnostics(
+    layout: TextLayoutResult,
+    utf16: Int,
+    leftMarginPx: Float,
+    textStyle: TextStyle,
+    textMeasurer: TextMeasurer,
+): Pair<Float, CaretDiagnostics> {
+    val x = caretXIn(layout, utf16, leftMarginPx, textStyle, textMeasurer)
+    val text = layout.layoutInput.text.text
+    val caret = utf16.coerceIn(0, text.length)
+    val anchor = trailingNeutralAnchorBefore(text, caret)
+    val anchorRectLeft = if (anchor != null) {
+        layout.getCursorRect(anchor).left
+    } else {
+        null
+    }
+    return x to CaretDiagnostics(anchorRectLeft = anchorRectLeft)
 }
 
 private fun measureAdvance(tail: String, textStyle: TextStyle, textMeasurer: TextMeasurer): Float {
