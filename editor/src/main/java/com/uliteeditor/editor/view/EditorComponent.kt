@@ -40,7 +40,6 @@ import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextMotion
 import androidx.compose.ui.unit.IntSize
@@ -59,6 +58,7 @@ import com.uliteeditor.editor.layout.RebuiltEditorLayout
 import com.uliteeditor.editor.layout.buildEditorLayout
 import com.uliteeditor.editor.layout.caretTopIn
 import com.uliteeditor.editor.layout.caretXIn
+import com.uliteeditor.editor.layout.composingRowAlign
 import com.uliteeditor.editor.layout.measureComposingLayout
 import com.uliteeditor.editor.layout.steadyCaretSpot
 import com.uliteeditor.editor.metrics.EditorMetrics
@@ -249,12 +249,13 @@ fun EditorComponent(
     val caretRowFirstTop = rebuilt.rowTops.getOrNull(caretRow) ?: steadyCaret.y
     // The composing preview overlays the caret's own row, so it must share the
     // row's paragraph alignment or the inserted text would visually jump sides
-    // on an RTL row while composing.
-    val caretRowTextAlign = when (rebuilt.rowDirections.getOrNull(caretRow)
-        ?: ResolvedTextDirection.Ltr) {
-        ResolvedTextDirection.Rtl -> TextAlign.Right
-        ResolvedTextDirection.Ltr -> TextAlign.Left
-    }
+    // on an RTL row while composing. The engine row at the caret is EMPTY while
+    // a span is composed (the IME holds the text out of the engine), so its
+    // cached rowDirections read LTR — the preview's direction must come from the
+    // text AS COMPOSED (committed prefix + live span) or an Arabic composing
+    // caret is laid out left-aligned and never tracks the committed right-
+    // aligned word (it clings to the first character until commit).
+    val caretRowTextAlign = composingRowAlign(caretRowText, composingText)
     val composingLayout = remember(
         composingText,
         composingColor,

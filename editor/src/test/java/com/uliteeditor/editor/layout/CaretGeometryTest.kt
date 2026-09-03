@@ -1,6 +1,7 @@
 package com.uliteeditor.editor.layout
 
 import androidx.compose.ui.text.style.ResolvedTextDirection
+import androidx.compose.ui.text.style.TextAlign
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -120,5 +121,37 @@ class CaretGeometryTest {
             ResolvedTextDirection.Ltr,
             paragraphBaseDirection("\uD83D\uDE00 مرحبا"),
         )
+    }
+
+    @Test
+    fun emptyRowWithArabicComposingSpanAlignsRight() {
+        // While the IME composes an Arabic word the engine row at the caret is
+        // empty (the composed text is held out of the engine), so the cached
+        // row alignment alone would lay the preview out left-aligned and the
+        // caret would cling to the first char until commit. The composing
+        // alignment is derived from the row + live span so an all-Arabic span
+        // over an empty row reads RTL and is right-aligned.
+        assertEquals(TextAlign.Right, composingRowAlign("", "اهلا"))
+    }
+
+    @Test
+    fun ltrPrefixKeepsComposingRowLeftAligned() {
+        // First-strong wins: a committed LTR prefix keeps the composing row
+        // left-aligned even when the live span is Arabic.
+        assertEquals(TextAlign.Left, composingRowAlign("abc", "اهلا"))
+    }
+
+    @Test
+    fun rtlPrefixKeepsComposingRowRightAligned() {
+        // A committed Arabic prefix keeps the composing row right-aligned even
+        // when the live span is Latin.
+        assertEquals(TextAlign.Right, composingRowAlign("مرحبا", "hello"))
+    }
+
+    @Test
+    fun noComposingSpanFallsBackToRowText() {
+        // A session with no live span aligns solely from the committed row text.
+        assertEquals(TextAlign.Left, composingRowAlign("abc", null))
+        assertEquals(TextAlign.Right, composingRowAlign("مرحبا", null))
     }
 }
