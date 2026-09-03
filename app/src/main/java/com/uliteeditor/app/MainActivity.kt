@@ -14,8 +14,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Share
 import androidx.compose.material.icons.automirrored.filled.WrapText
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
                             }
                             IconButton(onClick = { shareLogs(context) }) {
                                 Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Share,
+                                    imageVector = Icons.Filled.Share,
                                     contentDescription = "Share the session log",
                                 )
                             }
