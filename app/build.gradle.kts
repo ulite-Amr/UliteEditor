@@ -15,6 +15,24 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
+
+        // Build provenance surfaced in the UI (see MainActivity status bar):
+        // the exact git commit this APK was built from and whether the tree
+        // was dirty, so a device report can be tied to source unambiguously.
+        // Failure to read git (CI checkout, missing .git) falls back to
+        // "unknown" rather than breaking the build.
+        val gitSha = try {
+            providers.exec {
+                commandLine("git", "rev-parse", "--short", "HEAD")
+            }.standardOutput.asText.get().trim()
+        } catch (_: Exception) { "unknown" }
+        val gitDirty = try {
+            providers.exec {
+                commandLine("git", "status", "--porcelain")
+            }.standardOutput.asText.get().isNotBlank()
+        } catch (_: Exception) { false }
+        buildConfigField("String", "GIT_SHA", "\"${gitSha}\"")
+        buildConfigField("boolean", "GIT_DIRTY", "${gitDirty}")
     }
 
     signingConfigs {
@@ -58,6 +76,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

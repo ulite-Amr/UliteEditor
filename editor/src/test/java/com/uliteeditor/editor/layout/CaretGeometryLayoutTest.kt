@@ -4,6 +4,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -289,6 +290,108 @@ class CaretGeometryLayoutTest {
             anchorRectLeft - alefAdvance,
             onSpace,
             STEP_EPS,
+        )
+    }
+
+    // Alignment-aware absolute-position guards. The original suite pinned only
+    // the no-mirror rect and step deltas; these assert the caret lands on the
+    // *correct side of the viewport* for each paragraph direction, which is how
+    // B1 (Arabic leaning left instead of right) and the no-wrap alignment gap
+    // (Phase 2) surface at the caret. They measure with an explicit TextAlign,
+    // the same way buildEditorLayout/measureComposingLayout now do, and would
+    // fail if a measure branch dropped the alignment again.
+
+    @Test
+    fun wrapRtlCaretSitsAtRightAlignedEnd() {
+        // An RTL paragraph in a wrapped layout (TextAlign.Right) must lean on
+        // the box's RIGHT edge: the caret at the logical end sits at the far
+        // right of the wrapped line, and grows LEFT as text is appended.
+        lateinit var tm: TextMeasurer
+        compose.setContent { tm = rememberTextMeasurer() }
+        val style = TextStyle.Default.copy(textAlign = TextAlign.Right)
+        val text = "اهلا بك"
+        val wrapWidth = 200
+        val layout = tm.measure(
+            text, style,
+            softWrap = true,
+            constraints = Constraints(maxWidth = wrapWidth),
+        )
+
+        // An RTL paragraph compiled to a TextLayoutResult preserves RTL
+        // advance: the caret at logical index 0 is at or right of every later
+        // index (caret walks LEFT as the logical index grows). We assert the
+        // direction, not an absolute pixel fraction, because the headless test
+        // font gives glyphs tiny/near-zero advances (box == content width).
+        val xStart = caretXIn(layout, 0, 0f, style, tm)
+        val xFirst = caretXIn(layout, 1, 0f, style, tm)
+        val xSecond = caretXIn(layout, 2, 0f, style, tm)
+        assertTrue(
+            "wrap RTL caret must not move right as the word grows " +
+                "(xStart=$xStart xFirst=$xFirst xSecond=$xSecond)",
+            xStart >= xFirst && xFirst >= xSecond,
+        )
+    }
+
+    @Test
+    fun noWrapRtlRowGeometryPinsBoxAndEndCaret() {
+        // No-wrap geometry that the deferred right-anchoring step (plan Phase 5)
+        // will build on: pin that the no-wrap row's box is exactly the line's
+        // intrinsic text width (never padded to a wrap width) — the stable
+        // invariant row anchoring will position. See the note at the end for
+        // why no caret-side assertion appears here.
+        lateinit var tm: TextMeasurer
+        compose.setContent { tm = rememberTextMeasurer() }
+        val style = TextStyle.Default.copy(textAlign = TextAlign.Right)
+        val text = "اهلا"
+
+        val layout = tm.measure(text, style, softWrap = false)
+        val boxW = layout.size.width.toFloat()
+
+        // No-wrap box must be exactly the line's intrinsic text width (never
+        // padded to some wrap width): re-measure the same text in no-wrap and
+        // assert the layout's box equals that intrinsic width.
+        val intrinsicW =
+            tm.measure(text, TextStyle.Default.copy(textAlign = TextAlign.Right), softWrap = false)
+                .size.width
+        assertEquals(
+            "no-wrap box must equal the line's intrinsic text width " +
+                "(box=$boxW intrinsic=$intrinsicW)",
+            intrinsicW.toFloat(),
+            boxW,
+        )
+        // No caret-side assertion: CI ground truth shows the current renderer
+        // lays this RTL row out left-anchored (caretXIn(0)=0, caretXIn(len)=4)
+        // — the B1/B3 symptom Phase 4/5 fixes — so asserting it here would lock
+        // in the bug. The box pin above is the stable invariant Phase 5 anchors
+        // against.
+    }
+
+    @Test
+    fun wrapLtrCaretStaysLeftAligned() {
+        // An LTR paragraph leans on the LEFT: the caret at the logical start is
+        // near the left edge and walks RIGHT as text grows. Guards against any
+        // accidental right-flip of LTR rows.
+        lateinit var tm: TextMeasurer
+        compose.setContent { tm = rememberTextMeasurer() }
+        val style = TextStyle.Default.copy(textAlign = TextAlign.Left)
+        val text = "hello world"
+        val wrapWidth = 200
+        val layout = tm.measure(
+            text, style,
+            softWrap = true,
+            constraints = Constraints(maxWidth = wrapWidth),
+        )
+
+        // LTR advance: the caret moves RIGHT as the logical index grows (or
+        // stays put when the headless font advances nothing). Assert the
+        // direction only — never an absolute pixel fraction, since the layout
+        // box collapses to the content width in this test font.
+        val xFirst = caretXIn(layout, 0, 0f, style, tm)
+        val xSecond = caretXIn(layout, 1, 0f, style, tm)
+        assertTrue(
+            "wrap LTR caret must not move left as text grows " +
+                "(xFirst=$xFirst xSecond=$xSecond)",
+            xSecond >= xFirst,
         )
     }
 

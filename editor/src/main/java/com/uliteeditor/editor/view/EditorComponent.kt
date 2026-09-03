@@ -107,6 +107,7 @@ fun EditorComponent(
     modifier: Modifier = Modifier,
     settings: EditorSettings? = null,
     onMetricsChange: ((EditorMetrics) -> Unit)? = null,
+    onLog: ((String) -> Unit)? = null,
 ) {
     val session = remember { EditorSession() }
     val editorSettings = settings ?: remember { EditorSettings() }
@@ -256,6 +257,28 @@ fun EditorComponent(
     // caret is laid out left-aligned and never tracks the committed right-
     // aligned word (it clings to the first character until commit).
     val caretRowTextAlign = composingRowAlign(caretRowText, composingText)
+    // Diagnostic logging for on-device RTL debugging (no adb): emits one line
+    // per edit with the caret's resolved geometry and the row's alignment, so
+    // a shared log ties the caret/alignment symptom to exact values. No-op
+    // unless the host passes [onLog]. Keyed on [contentTick] only (not on
+    // onLog — an unstable inline lambda — otherwise it restarts on every
+    // recomposition and floods the log with frames, not just edits).
+    LaunchedEffect(contentTick) {
+        if (onLog != null) {
+            val align = when (caretRowTextAlign) {
+                TextAlign.Right -> "R"
+                TextAlign.Left -> "L"
+                else -> "?"
+            }
+            onLog(
+                "edit caretRow=$caretRow utf16=$caretRowUtf16 " +
+                    "x=${steadyCaret.x} y=${steadyCaret.y} " +
+                    "align=$align wrap=$wrapEnabled " +
+                    "scrollX=${session.scrollX()} scrollY=${session.scrollY()} " +
+                    "rowText=\"${caretRowText.take(40)}\"",
+            )
+        }
+    }
     val composingLayout = remember(
         composingText,
         composingColor,
