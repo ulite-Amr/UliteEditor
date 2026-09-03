@@ -86,6 +86,16 @@ A task without a corresponding progress log entry is considered incomplete, even
   checking CI status (`scripts/ci-status.sh`), opening a PR
   (`scripts/open-pr.sh`), downloading CI artifacts
   (`scripts/download-apk.sh`), reading issues/PRs, commenting.
+- **Standard APK delivery (the established pattern, no local builds):** signed
+  APKs come *only* from CI — never from building locally. The `build` job in
+  `.github/workflows/android.yml` signs (debug + test-release) and uploads them
+  as artifacts. To ship an APK: `git checkout main` (or the target branch),
+  `git pull`, then `scripts/download-apk.sh` (wraps `gh run download` against
+  the branch's latest run) and save the artifacts under `dist/`. Confirm the
+  run's `headSha` matches the intended commit before handing the APK to a user
+  (the app also prints `sha <GIT_SHA>` in its status bar as on-device
+  provenance). If `dist/` is requested, always download into it and report the
+  file paths + sizes.
 - **Merging is the maintainer's call.** By default the agent must never merge
   a PR, via `gh pr merge`, the GitHub UI, or by routing around branch
   protection. The maintainer may delegate merging per phase (stated in the
@@ -123,6 +133,11 @@ If a task is ambiguous, under-specified, or touches a decision not yet recorded 
 
 - The maintainer may write prompts in Arabic; this does **not** change the agent's output language.
 - The agent must **always reply in English** — never Arabic or any other language.
+- **No fake/interim Arabic in the agent's own output.** Writing Arabic at all —
+  even a single word, phrase, or a "here is your reply in Arabic" framing — is a
+  violation. This includes chat replies and any text the agent authors
+  (commits, PRs, code comments, docs, chat). If the maintainer writes Arabic,
+  answer in English; do not echo the Arabic. Translate, then reply in English.
 - Applies everywhere: chat responses, commit messages, PR titles/bodies, code comments, and documentation.
 
 ## 10. Output Style — No Machine Signals
