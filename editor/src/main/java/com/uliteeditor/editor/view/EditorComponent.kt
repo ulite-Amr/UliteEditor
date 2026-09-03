@@ -274,20 +274,21 @@ fun EditorComponent(
             val rowLayout = rebuilt.rowLayouts.getOrNull(caretRow)
             val lineLeft = rowLayout?.getLineLeft(0)
             val lineRight = rowLayout?.getLineRight(0)
-            val diagnostics = if (rowLayout != null) {
+            val (diagX, diagnostics) = if (rowLayout != null) {
                 caretXInWithDiagnostics(
                     rowLayout,
                     caretRowUtf16,
                     leftMarginPx,
                     textStyle,
                     textMeasurer,
-                ).second
+                )
             } else {
-                null
+                null to null
             }
             onLog(
                 "edit caretRow=$caretRow utf16=$caretRowUtf16 " +
                     "x=${steadyCaret.x} y=${steadyCaret.y} " +
+                    "diagX=$diagX " +
                     "align=$align wrap=$wrapEnabled " +
                     "scrollX=${session.scrollX()} scrollY=${session.scrollY()} " +
                     "lineLeft=$lineLeft lineRight=$lineRight " +
