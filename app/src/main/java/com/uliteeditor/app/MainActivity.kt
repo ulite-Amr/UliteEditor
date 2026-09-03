@@ -91,6 +91,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        // Reopen a fresh session on each foreground (a prior onStop closed the
+        // writer) so a long-lived process keeps logging across backgroundings.
+        EditorLog.open(this)
+    }
+
     override fun onStop() {
         super.onStop()
         // Flush + close the session log cleanly so backgrounding leaves a

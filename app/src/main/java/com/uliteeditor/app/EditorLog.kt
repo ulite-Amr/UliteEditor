@@ -36,6 +36,9 @@ internal object EditorLog {
 
     /** Must be called once at app start (see [UliteApp]). Idempotent. */
     fun open(context: Context) = lock.withLock {
+        // Idempotent: if a session is already open (e.g. open() was called from
+        // both Application.onCreate and the first Activity.onStart), keep it.
+        if (writer != null && currentLabel != null) return
         val logsDir = File(context.filesDir, "logs").apply { mkdirs() }
         dir = logsDir
         trimOldSessions(logsDir)

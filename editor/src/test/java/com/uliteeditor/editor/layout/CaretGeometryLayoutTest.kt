@@ -317,17 +317,16 @@ class CaretGeometryLayoutTest {
             constraints = Constraints(maxWidth = wrapWidth),
         )
 
-        // A short RTL paragraph occupies one line whose rect fills the wrap
-        // width (it starts at the right). End-of-text caret must be near the
-        // box's right edge (x ~ wrapWidth).
-        val xEnd = caretXIn(layout, text.length, 0f, style, tm)
+        // An RTL paragraph in right-aligned wrap: logical start is the visual
+        // RIGHT, so the caret before the first character must lean on the box's
+        // right edge (proving the paragraph is actually right-aligned), and the
+        // caret walks LEFT as the logical index grows.
+        val xStart = caretXIn(layout, 0, 0f, style, tm)
         assertTrue(
-            "wrap RTL end caret must lean on the right edge " +
-                "(xEnd=$xEnd, box=${layout.size.width})",
-            xEnd > layout.size.width / 2,
+            "wrap RTL start caret (logical start = visual right) must lean on " +
+                "the box's right edge (xStart=$xStart, box=${layout.size.width})",
+            xStart > layout.size.width / 2,
         )
-        // The caret at the FIRST character (start of the RTL word) is at the
-        // far right; the caret after appending one more Arabic char walks LEFT.
         val xFirst = caretXIn(layout, 1, 0f, style, tm)
         val xSecond = caretXIn(layout, 2, 0f, style, tm)
         assertTrue(
@@ -343,9 +342,9 @@ class CaretGeometryLayoutTest {
         // will build on. A no-wrap row's box is exactly the line's own width —
         // alignment inside it is a no-op (box == content) — so what matters in
         // absolute px is: the box is the text width, the caret at the logical
-        // START of a pure-Arabic line sits at the box's LEFT (x ~ 0), and the
-        // caret at the logical END sits at the box's RIGHT (x ~ box width). Row
-        // anchoring positions this text-width box against the content area.
+        // START of a pure-Arabic line sits at the box's RIGHT (visual start),
+        // and the caret at the logical END sits at the box's LEFT (visual end).
+        // Row anchoring positions this text-width box against the content area.
         lateinit var tm: TextMeasurer
         compose.setContent { tm = rememberTextMeasurer() }
         val style = TextStyle.Default.copy(textAlign = TextAlign.Right)
@@ -361,16 +360,16 @@ class CaretGeometryLayoutTest {
         val xEnd = caretXIn(layout, text.length, 0f, style, tm)
 
         // Pure-Arabic paragraph (base RTL): logical start is the visual RIGHT
-        // (rect at the box's right), logical end is the visual LEFT.
+        // (rect near the box's right edge), logical end is the visual LEFT.
         assertTrue(
-            "RTL logical start caret must sit near the box's left edge " +
+            "RTL logical start caret must sit near the box's right edge " +
                 "(xStart=$xStart box=$boxW)",
-            xStart < boxW / 2,
+            xStart > boxW / 2,
         )
         assertTrue(
-            "RTL logical end caret must sit at the box's right side " +
+            "RTL logical end caret must sit near the box's left edge " +
                 "(xEnd=$xEnd box=$boxW)",
-            xEnd > boxW / 2,
+            xEnd < boxW / 2,
         )
     }
 

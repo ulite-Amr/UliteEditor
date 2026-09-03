@@ -260,8 +260,10 @@ fun EditorComponent(
     // Diagnostic logging for on-device RTL debugging (no adb): emits one line
     // per edit with the caret's resolved geometry and the row's alignment, so
     // a shared log ties the caret/alignment symptom to exact values. No-op
-    // unless the host passes [onLog].
-    LaunchedEffect(contentTick, onLog) {
+    // unless the host passes [onLog]. Keyed on [contentTick] only (not on
+    // onLog — an unstable inline lambda — otherwise it restarts on every
+    // recomposition and floods the log with frames, not just edits).
+    LaunchedEffect(contentTick) {
         if (onLog != null) {
             val align = when (caretRowTextAlign) {
                 TextAlign.Right -> "R"
