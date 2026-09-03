@@ -305,7 +305,10 @@ class CaretGeometryLayoutTest {
     fun wrapRtlCaretSitsAtRightAlignedEnd() {
         // An RTL paragraph in a wrapped layout (TextAlign.Right) must lean on
         // the box's RIGHT edge: the caret at the logical end sits at the far
-        // right of the wrapped line, and grows LEFT as text is appended.
+        // right of the wrapped line, and grows LEFT as text is appended. The
+        // wrapped measure is now a fixed-width box (min == max == wrapWidth),
+        // so the alignment is observable as an absolute position — NOT hidden
+        // inside a content-sized box (the B1 bug this pins).
         lateinit var tm: TextMeasurer
         compose.setContent { tm = rememberTextMeasurer() }
         val style = TextStyle.Default.copy(textAlign = TextAlign.Right)
@@ -314,14 +317,11 @@ class CaretGeometryLayoutTest {
         val layout = tm.measure(
             text, style,
             softWrap = true,
-            constraints = Constraints(maxWidth = wrapWidth),
+            constraints = Constraints(minWidth = wrapWidth, maxWidth = wrapWidth),
         )
 
-        // An RTL paragraph compiled to a TextLayoutResult preserves RTL
-        // advance: the caret at logical index 0 is at or right of every later
-        // index (caret walks LEFT as the logical index grows). We assert the
-        // direction, not an absolute pixel fraction, because the headless test
-        // font gives glyphs tiny/near-zero advances (box == content width).
+        // RTL advance: the caret at logical index 0 is at or right of every
+        // later index (the caret walks LEFT as the logical index grows).
         val xStart = caretXIn(layout, 0, 0f, style, tm)
         val xFirst = caretXIn(layout, 1, 0f, style, tm)
         val xSecond = caretXIn(layout, 2, 0f, style, tm)
@@ -329,6 +329,16 @@ class CaretGeometryLayoutTest {
             "wrap RTL caret must not move right as the word grows " +
                 "(xStart=$xStart xFirst=$xFirst xSecond=$xSecond)",
             xStart >= xFirst && xFirst >= xSecond,
+        )
+        // The end-of-text caret (rightmost in RTL) must lean on the box's RIGHT
+        // half, i.e. sit clearly toward `wrapWidth`, not the left. This is the
+        // absolute pin that fails if the alignment is invisible (a content-sized
+        // box would place a ~handful-of-px-wide line left of the box's middle).
+        val xEnd = caretXIn(layout, text.length, 0f, style, tm)
+        assertTrue(
+            "wrap RTL end caret must lean on the box's right half " +
+                "(xEnd=$xEnd wrapWidth=$wrapWidth)",
+            xEnd > wrapWidth * 0.5f,
         )
     }
 
@@ -370,7 +380,8 @@ class CaretGeometryLayoutTest {
     fun wrapLtrCaretStaysLeftAligned() {
         // An LTR paragraph leans on the LEFT: the caret at the logical start is
         // near the left edge and walks RIGHT as text grows. Guards against any
-        // accidental right-flip of LTR rows.
+        // accidental right-flip of LTR rows. Like the RTL case this uses a
+        // fixed-width box so the alignment is an observable absolute position.
         lateinit var tm: TextMeasurer
         compose.setContent { tm = rememberTextMeasurer() }
         val style = TextStyle.Default.copy(textAlign = TextAlign.Left)
@@ -379,19 +390,24 @@ class CaretGeometryLayoutTest {
         val layout = tm.measure(
             text, style,
             softWrap = true,
-            constraints = Constraints(maxWidth = wrapWidth),
+            constraints = Constraints(minWidth = wrapWidth, maxWidth = wrapWidth),
         )
 
         // LTR advance: the caret moves RIGHT as the logical index grows (or
-        // stays put when the headless font advances nothing). Assert the
-        // direction only — never an absolute pixel fraction, since the layout
-        // box collapses to the content width in this test font.
+        // stays put when the headless font advances nothing).
         val xFirst = caretXIn(layout, 0, 0f, style, tm)
         val xSecond = caretXIn(layout, 1, 0f, style, tm)
         assertTrue(
             "wrap LTR caret must not move left as text grows " +
                 "(xFirst=$xFirst xSecond=$xSecond)",
             xSecond >= xFirst,
+        )
+        // The start-of-text caret (leftmost in LTR, TextAlign.Left) must sit in the
+        // box's LEFT half, clearly off the right edge / not mirrored right.
+        assertTrue(
+            "wrap LTR start caret must lean on the box's left half " +
+                "(xFirst=$xFirst wrapWidth=$wrapWidth)",
+            xFirst < wrapWidth * 0.5f,
         )
     }
 
