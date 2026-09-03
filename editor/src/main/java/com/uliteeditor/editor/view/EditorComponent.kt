@@ -40,7 +40,6 @@ import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextMotion
 import androidx.compose.ui.unit.IntSize
@@ -59,8 +58,8 @@ import com.uliteeditor.editor.layout.RebuiltEditorLayout
 import com.uliteeditor.editor.layout.buildEditorLayout
 import com.uliteeditor.editor.layout.caretTopIn
 import com.uliteeditor.editor.layout.caretXIn
+import com.uliteeditor.editor.layout.composingRowAlign
 import com.uliteeditor.editor.layout.measureComposingLayout
-import com.uliteeditor.editor.layout.paragraphBaseDirection
 import com.uliteeditor.editor.layout.steadyCaretSpot
 import com.uliteeditor.editor.metrics.EditorMetrics
 import com.uliteeditor.editor.render.EditorDrawState
@@ -256,11 +255,7 @@ fun EditorComponent(
     // text AS COMPOSED (committed prefix + live span) or an Arabic composing
     // caret is laid out left-aligned and never tracks the committed right-
     // aligned word (it clings to the first character until commit).
-    val mergedDirection = paragraphBaseDirection(caretRowText + (composingText ?: ""))
-    val caretRowTextAlign = when (mergedDirection) {
-        ResolvedTextDirection.Rtl -> TextAlign.Right
-        ResolvedTextDirection.Ltr -> TextAlign.Left
-    }
+    val caretRowTextAlign = composingRowAlign(caretRowText, composingText)
     val composingLayout = remember(
         composingText,
         composingColor,

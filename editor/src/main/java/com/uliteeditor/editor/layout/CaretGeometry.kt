@@ -5,6 +5,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.ResolvedTextDirection
+import androidx.compose.ui.text.style.TextAlign
 import com.uliteeditor.editor.bidi.TextIndex
 import uniffi.ulite_editor_core.CursorPosition
 
@@ -89,6 +90,23 @@ private fun measureAdvance(tail: String, textStyle: TextStyle, textMeasurer: Tex
  */
 internal fun paragraphBaseDirection(text: String): ResolvedTextDirection =
     firstStrongDirectionAfter(text, 0) ?: ResolvedTextDirection.Ltr
+
+/**
+ * Text alignment for the composing caret's row, derived from the paragraph
+ * direction of the text AS COMPOSED (committed row + live composing span).
+ *
+ * While the IME composes, the span is held OUT of the engine, so the row at the
+ * caret is empty and its cached direction reads LTR; an all-Arabic composing
+ * span would then be left-aligned and its caret would cling to the first char
+ * until the span commits. Deriving from the merged text lets the composing
+ * preview share the direction the span will have once committed, so the caret
+ * tracks the growing word instead of staying pinned.
+ */
+internal fun composingRowAlign(rowText: String, composingText: String?): TextAlign =
+    when (paragraphBaseDirection(rowText + (composingText ?: ""))) {
+        ResolvedTextDirection.Rtl -> TextAlign.Right
+        ResolvedTextDirection.Ltr -> TextAlign.Left
+    }
 
 /** Direction of the strong character at UTF-16 [index], or null when neutral. */
 private fun strongCharDirection(text: String, index: Int): ResolvedTextDirection? {
