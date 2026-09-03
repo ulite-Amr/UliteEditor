@@ -121,4 +121,19 @@ class CaretGeometryTest {
             paragraphBaseDirection("\uD83D\uDE00 مرحبا"),
         )
     }
+
+    @Test
+    fun emptyRowWithArabicComposingSpanIsRtl() {
+        // While the IME composes an Arabic word the engine row at the caret is
+        // empty (the composed text is held out of the engine), but the composing
+        // preview's alignment must follow the text AS COMPOSED — an empty
+        // committed prefix + a live Arabic span must therefore read RTL, or the
+        // composing caret is laid out left-aligned and clings to the first char
+        // until the span commits. This is the caretRowTextAlign derivation in
+        // EditorComponent (paragraphBaseDirection(caretRowText + composingText)).
+        assertEquals(
+            ResolvedTextDirection.Rtl,
+            paragraphBaseDirection("" + "اهلا"),
+        )
+    }
 }
