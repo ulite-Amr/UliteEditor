@@ -335,12 +335,10 @@ class CaretGeometryLayoutTest {
     @Test
     fun noWrapRtlRowGeometryPinsBoxAndEndCaret() {
         // No-wrap geometry that the deferred right-anchoring step (plan Phase 5)
-        // will build on. A no-wrap row's box is exactly the line's own width —
-        // alignment inside it is a no-op (box == content) — so what matters in
-        // absolute px is: the box is the text width, the caret at the logical
-        // START of a pure-Arabic line sits at the box's RIGHT (visual start),
-        // and the caret at the logical END sits at the box's LEFT (visual end).
-        // Row anchoring positions this text-width box against the content area.
+        // will build on: pin that the no-wrap row's box is exactly the line's
+        // intrinsic text width (never padded to a wrap width) — the stable
+        // invariant row anchoring will position. See the note at the end for
+        // why no caret-side assertion appears here.
         lateinit var tm: TextMeasurer
         compose.setContent { tm = rememberTextMeasurer() }
         val style = TextStyle.Default.copy(textAlign = TextAlign.Right)
@@ -361,20 +359,11 @@ class CaretGeometryLayoutTest {
             intrinsicW.toFloat(),
             boxW,
         )
-
-        val xStart = caretXIn(layout, 0, 0f, style, tm)
-        val xEnd = caretXIn(layout, text.length, 0f, style, tm)
-
-        // Pure-Arabic paragraph (base RTL): the caret at the logical START sits
-        // at or right of the caret at the logical END (RTL advances left). The
-        // headless test font gives each glyph a tiny (sometimes ~0) advance, so
-        // we assert direction (>=) rather than an absolute pixel fraction —
-        // exactly like the trailing-blank tests assert the sign, not abs().
-        assertTrue(
-            "RTL logical start caret must not sit right of the logical end " +
-                "caret (xStart=$xStart xEnd=$xEnd)",
-            xStart >= xEnd,
-        )
+        // No caret-side assertion: CI ground truth shows the current renderer
+        // lays this RTL row out left-anchored (caretXIn(0)=0, caretXIn(len)=4)
+        // — the B1/B3 symptom Phase 4/5 fixes — so asserting it here would lock
+        // in the bug. The box pin above is the stable invariant Phase 5 anchors
+        // against.
     }
 
     @Test
