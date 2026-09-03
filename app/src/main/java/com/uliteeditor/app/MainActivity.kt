@@ -153,9 +153,15 @@ private fun shareLogs(context: android.content.Context) {
         putExtra(Intent.EXTRA_SUBJECT, "UliteEditor session log ${file.name}")
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    context.startActivity(
-        Intent.createChooser(send, "Share UliteEditor session log"),
-    )
+    try {
+        context.startActivity(
+            Intent.createChooser(send, "Share UliteEditor session log"),
+        )
+    } catch (_: android.content.ActivityNotFoundException) {
+        // No share target resolved: fall back to a clipboard copy so the log
+        // is still gettable on the device without adb.
+        copyLogsToClipboard(context, file.readText())
+    }
 }
 
 private fun copyLogsToClipboard(context: android.content.Context, text: String) {

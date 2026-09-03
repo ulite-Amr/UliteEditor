@@ -353,8 +353,18 @@ class CaretGeometryLayoutTest {
         val layout = tm.measure(text, style, softWrap = false)
         val boxW = layout.size.width.toFloat()
 
-        // No-wrap box must not be padded to any wrap width: it is the line.
-        assertTrue("no-wrap box must equal the text width", boxW > 0f)
+        // No-wrap box must be exactly the line's intrinsic text width (never
+        // padded to some wrap width): re-measure the same text in no-wrap and
+        // assert the layout's box equals that intrinsic width.
+        val intrinsicW =
+            tm.measure(text, TextStyle.Default.copy(textAlign = TextAlign.Right), softWrap = false)
+                .size.width
+        assertEquals(
+            "no-wrap box must equal the line's intrinsic text width " +
+                "(box=$boxW intrinsic=$intrinsicW)",
+            intrinsicW.toFloat(),
+            boxW,
+        )
 
         val xStart = caretXIn(layout, 0, 0f, style, tm)
         val xEnd = caretXIn(layout, text.length, 0f, style, tm)
