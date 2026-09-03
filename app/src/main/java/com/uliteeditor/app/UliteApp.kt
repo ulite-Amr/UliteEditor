@@ -17,6 +17,10 @@ class UliteApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Session log file opened at app start (and closed on the activity's
+        // onStop): the source of caret/alignment ground truth on a device with
+        // no adb. Reached via the share-logs action or filesDir/logs.
+        EditorLog.open(this)
         val debuggable = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         if (debuggable) return
         Thread.setDefaultUncaughtExceptionHandler(CrashHandler(this))

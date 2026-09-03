@@ -77,9 +77,14 @@ internal fun buildEditorLayout(
                 constraints = wrapConstraints,
             )
         } else {
+            // No-wrap still carries the paragraph's explicit alignment: the box
+            // is only as wide as the line's own text, so it leans on its script
+            // (Right for RTL, Left for LTR) once horizontally anchored — without
+            // it an RTL row would default to Start (left) and contradict the
+            // caret, which is drawn from the same layout.
             textMeasurer.measure(
                 AnnotatedString(text),
-                textStyle,
+                textStyle.copy(textAlign = textAlign),
                 softWrap = false,
                 maxLines = Int.MAX_VALUE,
                 overflow = TextOverflow.Clip,

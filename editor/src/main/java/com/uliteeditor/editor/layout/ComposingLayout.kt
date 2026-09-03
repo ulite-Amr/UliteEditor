@@ -54,9 +54,11 @@ internal fun measureComposingLayout(
             constraints = Constraints(maxWidth = wrapWidthPx.toInt().coerceAtLeast(1)),
         )
     } else {
+        // No-wrap composing preview mirrors [buildEditorLayout]'s no-wrap row:
+        // explicit alignment so an RTL preview leans right once anchored.
         textMeasurer.measure(
             merged,
-            textStyle,
+            textStyle.copy(textAlign = textAlign),
             softWrap = false,
             maxLines = Int.MAX_VALUE,
             overflow = TextOverflow.Clip,
