@@ -45,7 +45,11 @@ internal data class CaretDiagnostics(
  * insertion point for an RTL paragraph is its line's LEFT edge, which we take
  * from [TextLayoutResult.getLineLeft] for the caret's line. Interior RTL
  * positions (getCursorRect steps correctly by char width) and any LTR row
- * (getPrimaryHorizontal already gives the content edge) are untouched.
+ * (getPrimaryHorizontal already gives the content edge) are untouched. The
+ * gate is [paragraphBaseDirection] (first-strong): it must be the *content*
+ * direction, not [TextLayoutResult.getParagraphDirection], because
+ * `TextAlign.Right` coerces the resolved paragraph direction to Ltr even for
+ * Arabic text, so the latter would never match here.
  *
  * One regime is not trusted: a caret facing a *trailing* run of blanks
  * (end-of-line Space/NBSP/ZWSP). The platform resolves a trailing neutral
@@ -87,10 +91,13 @@ internal fun caretXIn(
     // so when the caret sits at the end of a whole-RTL row we take that instead.
     // Interior positions (getCursorRect steps by char width correctly) and any
     // LTR row (getPrimaryHorizontal already gives the content edge) are
-    // untouched. Full formula in the doc comment above.
+    // untouched. The gate uses paragraphBaseDirection (first-strong), NOT
+    // getParagraphDirection: TextAlign.Right coerces the *resolved* paragraph
+    // direction to Ltr even when the content is Arabic, so the latter would
+    // never fire. Full formula in the doc comment above.
     val baseX = if (
         caret == text.length &&
-        layout.getParagraphDirection(caret) == ResolvedTextDirection.Rtl
+        paragraphBaseDirection(text) == ResolvedTextDirection.Rtl
     ) {
         leftMarginPx + layout.getLineLeft(layout.getLineForOffset(caret))
     } else {
