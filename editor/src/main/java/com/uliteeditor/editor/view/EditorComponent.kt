@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.font.FontFamily
@@ -69,6 +70,20 @@ import com.uliteeditor.editor.settings.EditorSettings
 import kotlinx.coroutines.launch
 import uniffi.ulite_editor_core.CursorPosition
 import uniffi.ulite_editor_core.EditorSession
+
+/**
+ * One snapshot of the caret row's laid-out geometry from the previous camera
+ * pass, so the per-space-keystroke log (LOG POINT 2, Bug B) can diff
+ * before-indices against the current rebuild. Only compared when the logical
+ * row matches the current caret row; fields are null when the row had no
+ * layout (e.g. first pass).
+ */
+internal data class RtlWrapBefore(
+    val row: Int,
+    val caretLineCount: Int?,
+    val lineLeft: Float?,
+    val lineRight: Float?,
+)
 
 /**
  * The reusable editor composable: it owns a live [EditorSession] behind the
@@ -361,6 +376,11 @@ fun EditorComponent(
     // contentTick): the canvas frame of this recomposition already reads the
     // corrected camera — do not move it above.
     val lastEditTick = remember { intArrayOf(contentTick) }
+    // LOG POINT 2 (Bug B): the previous observation of the caret row's laid-out
+    // geometry, so the per-space-keystroke log can diff lineLeft/lineRight and
+    // the caret line's line count "BEFORE this keystroke" against the current
+    // rebuild. Stored once per camera pass; only meaningful when [row] matches.
+    val rtlWrapLast = remember { mutableStateOf<RtlWrapBefore?>(null) }
     val caretAnchor = composingCaretOffset ?: steadyCaret
     remember(
         contentTick,
@@ -388,9 +408,16 @@ fun EditorComponent(
         )
         val boundsMoved =
             session.scrollX() != scrollXBefore || session.scrollY() != scrollYBefore
+        // The code path that actually moved the camera this pass: the typed-
+        // edit follow, the plain margin ensure, or a re-clamp by updateBounds.
+        // updateBounds always runs, so its clamp only counts as the mover when
+        // neither follow nor ensure reported a move.
+        var pathMoved = false
+        var movedBy = "updateBounds-clamp"
         if (!scaling) {
             val didMove = if (contentTick != lastEditTick[0]) {
                 lastEditTick[0] = contentTick
+                movedBy = "followCaretAfterEdit"
                 session.followCaretAfterEdit(
                     caretAnchor.x,
                     caretAnchor.y,
@@ -399,6 +426,7 @@ fun EditorComponent(
                     viewportHeightPx,
                 )
             } else {
+                movedBy = "ensureVisible"
                 session.ensureVisible(
                     caretAnchor.x,
                     caretAnchor.y,
@@ -407,7 +435,70 @@ fun EditorComponent(
                     viewportHeightPx,
                 )
             }
+            if (didMove) pathMoved = true
             if (didMove || boundsMoved) scrollTick++
+        } else if (boundsMoved) {
+            pathMoved = true
+        }
+        val scrollXAfter = session.scrollX()
+        val scrollXMoved = scrollXAfter != scrollXBefore
+        // LOG POINT 2 (Bug B): one dense line per keystroke that leaves the
+        // caret row ending in space(s) — and any subsequent wrap-check pass on
+        // such a row — with the full before/after state needed to tell whether
+        // a visual "line shift" comes from (a) scrollX being adjusted wrongly,
+        // (b) lineLeft/lineRight being recalculated wrong, or (c) the RTL
+        // anchor/origin x drifting. Emitting the whole set together (never one
+        // value in isolation) lets the diffs distinguish the three cases just
+        // by reading the log. No-op unless the host wired [onLog].
+        if (onLog != null) {
+            val rowText = caretRowText
+            val trailingSpaces = rowText.length - rowText.trimEnd(' ').length
+            val trailingRun = rowText.takeLast(trailingSpaces)
+            val caretRowLayout = rebuilt.rowLayouts.getOrNull(caretRow)
+            val trailingSpacesW = if (trailingSpaces > 0) {
+                textMeasurer.measure(
+                    AnnotatedString(trailingRun),
+                    textStyle,
+                ).size.width.toFloat()
+            } else {
+                0f
+            }
+            val rowW = caretRowLayout?.size?.width?.toFloat() ?: 0f
+            val caretLine = caretRowLayout?.getLineForOffset(caretRowUtf16) ?: 0
+            val lineLeftAfter = caretRowLayout?.getLineLeft(caretLine)
+            val lineRightAfter = caretRowLayout?.getLineRight(caretLine)
+            val anchorX = caretRowLayout?.let { leftMarginPx + it.getLineLeft(caretLine) }
+            val prev = rtlWrapLast.value
+            val wrapTriggered = prev?.let { p ->
+                p.row == caretRow && p.caretLineCount != null && caretRowLayout != null &&
+                    p.caretLineCount != caretRowLayout.lineCount
+            } ?: false
+            val prevLineLeft = prev?.takeIf { it.row == caretRow }?.lineLeft
+            val prevLineRight = prev?.takeIf { it.row == caretRow }?.lineRight
+            if (trailingSpaces > 0) {
+                onLog(
+                    "rtlwrap trailingSpaces=$trailingSpaces " +
+                        "trailingSpacesW=$trailingSpacesW rowW=$rowW " +
+                        "wrapW=$wrapWidthPx " +
+                        "lineLeftBefore=$prevLineLeft lineRightBefore=$prevLineRight " +
+                        "lineLeftAfter=$lineLeftAfter lineRightAfter=$lineRightAfter " +
+                        "scrollXBefore=$scrollXBefore scrollXAfter=$scrollXAfter " +
+                        "anchorX=${anchorX ?: "null"} " +
+                        "wrapTriggered=$wrapTriggered " +
+                        "path=${when {
+                            !scrollXMoved -> "no-scroll-move"
+                            pathMoved -> movedBy
+                            else -> "gesture-or-other"
+                        }} " +
+                        "rowCount=${rebuilt.rowLayouts.size}",
+                )
+            }
+            rtlWrapLast.value = RtlWrapBefore(
+                row = caretRow,
+                caretLineCount = caretRowLayout?.lineCount,
+                lineLeft = lineLeftAfter,
+                lineRight = lineRightAfter,
+            )
         }
         // The keyed body's only job is running the correction pass; lint
         // forbids remember returning Unit, and no state belongs here.
@@ -505,6 +596,7 @@ fun EditorComponent(
                     onEdited = onImeEdited,
                     onImeCaretMoved = onImeCaretMoved,
                     onFocusChanged = onImeFocusChanged,
+                    onLog = onLog,
                 )
                 .focusTarget(),
         ) {
