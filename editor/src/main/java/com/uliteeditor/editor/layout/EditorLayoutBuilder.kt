@@ -53,16 +53,6 @@ internal fun buildEditorLayout(
     val rowDirections = mutableListOf<ResolvedTextDirection>()
     var contentHeightPx = topMarginPx
     var maxLineWidthPx = 0f
-    // The rightmost reachable caret across every row (content-space, its
-    // `leftMarginPx + rect.left`), tracked so the horizontal scroll bounds
-    // cannot clamp the camera below the caret's own extent. Visible glyphs
-    // are bounded by the measured line width, but the trailing-blank caret
-    // rebuild in `caretXIn` walks PAST the visible line by the measured
-    // advance of a terminal space run — so the wrap-width/line-width extent
-    // alone would let a trailing space push the caret out of bounds while the
-    // camera, clamped to `max_scroll_x`, sat still. Deriving the extent from
-    // the real caret keeps scroll bounds coherent with caret reachability.
-    var maxCaretExtentX = 0f
     // A fixed-width constraint (min == max) makes TextMeasurer lay the
     // paragraph out across the full wrap width instead of collapsing the box
     // to the line's own content width. Inside a content-sized box TextAlign
@@ -112,28 +102,16 @@ internal fun buildEditorLayout(
         rowTops += contentHeightPx
         rowDirections += direction
         contentHeightPx += layout.size.height
-        // The caret at a row's end-of-text is the rightmost point the caret
-        // can reach on that row. For visible text that is the content's right
-        // edge + margin; for a row ending in whitespace the trailing-blank
-        // rebuild extends past it (see the extent note above).
-        maxCaretExtentX = maxOf(
-            maxCaretExtentX,
-            caretXIn(layout, text.length, leftMarginPx, textStyle, textMeasurer),
-        )
         if (!wrapEnabled) {
             maxLineWidthPx = maxOf(maxLineWidthPx, layout.size.width.toFloat())
         }
     }
     // Wrap locks horizontal scroll to the wrap width; no-wrap widens the
-    // canvas to the longest row instead. Either way the extent must also
-    // cover the caret's own reachability (a trailing blank run walks the
-    // caret past the visible line) so the scroll bounds never clamp the
-    // camera short of the caret — Bug 1's camera stops following trailing
-    // spaces because the old width-only bounds did exactly that.
+    // canvas to the longest row instead.
     val contentWidthPx = if (wrapEnabled) {
-        maxOf(leftMarginPx + rightPadPx + wrapWidthPx, maxCaretExtentX)
+        leftMarginPx + rightPadPx + wrapWidthPx
     } else {
-        maxOf(leftMarginPx + rightPadPx + maxLineWidthPx, maxCaretExtentX)
+        leftMarginPx + rightPadPx + maxLineWidthPx
     }
     return RebuiltEditorLayout(
         rowLayouts = rowLayouts,
