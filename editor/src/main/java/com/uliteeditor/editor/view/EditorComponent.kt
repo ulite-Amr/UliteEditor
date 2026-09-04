@@ -72,6 +72,20 @@ import uniffi.ulite_editor_core.CursorPosition
 import uniffi.ulite_editor_core.EditorSession
 
 /**
+ * One snapshot of the caret row's laid-out geometry from the previous camera
+ * pass, so the per-space-keystroke log (LOG POINT 2, Bug B) can diff
+ * before-indices against the current rebuild. Only compared when the logical
+ * row matches the current caret row; fields are null when the row had no
+ * layout (e.g. first pass).
+ */
+internal data class RtlWrapBefore(
+    val row: Int,
+    val caretLineCount: Int?,
+    val lineLeft: Float?,
+    val lineRight: Float?,
+)
+
+/**
  * The reusable editor composable: it owns a live [EditorSession] behind the
  * UniFFI bridge and renders it like a word processor, with Compose doing the
  * glyph-space geometry. The heavy lifting is split across the modules under
@@ -103,20 +117,6 @@ import uniffi.ulite_editor_core.EditorSession
  * [settings] is the host's view of editor preferences; pass an owned
  * instance to keep the toggles (word wrap) shared with the app's UI.
  */
-
-/**
- * One snapshot of the caret row's laid-out geometry from the previous camera
- * pass, so the per-space-keystroke log (LOG POINT 2, Bug B) can diff
- * before-indices against the current rebuild. Only compared when the logical
- * row matches the current caret row; fields are null when the row had no
- * layout (e.g. first pass).
- */
-internal data class RtlWrapBefore(
-    val row: Int,
-    val caretLineCount: Int?,
-    val lineLeft: Float?,
-    val lineRight: Float?,
-)
 @Composable
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalTextApi::class)
 fun EditorComponent(
