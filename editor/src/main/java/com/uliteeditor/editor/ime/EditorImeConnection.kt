@@ -87,6 +87,7 @@ internal class EditorImeNode(
     var onEdited: () -> Unit,
     var onImeCaretMoved: () -> Unit,
     var onFocusChanged: (Boolean) -> Unit,
+    var onLog: ((String) -> Unit)?,
     var handle: ImeHandle?,
 ) : Modifier.Node(), PlatformTextInputModifierNode, FocusEventModifierNode {
 
@@ -141,6 +142,7 @@ internal class EditorImeNode(
                     onComposingChanged = onComposingChanged,
                     onEdited = onEdited,
                     onImeCaretMoved = onImeCaretMoved,
+                    onLog = onLog,
                 )
             activeConnection = connection
             connection
@@ -158,6 +160,7 @@ internal data class EditorImeNodeElement(
     private val onEdited: () -> Unit,
     private val onImeCaretMoved: () -> Unit,
     private val onFocusChanged: (Boolean) -> Unit,
+    private val onLog: ((String) -> Unit)?,
 ) : ModifierNodeElement<EditorImeNode>() {
     override fun create(): EditorImeNode {
         val node =
@@ -167,6 +170,7 @@ internal data class EditorImeNodeElement(
                 onEdited,
                 onImeCaretMoved,
                 onFocusChanged,
+                onLog,
                 handle,
             )
         handle.node = node
@@ -179,12 +183,14 @@ internal data class EditorImeNodeElement(
         node.onEdited = onEdited
         node.onImeCaretMoved = onImeCaretMoved
         node.onFocusChanged = onFocusChanged
+        node.onLog = onLog
         node.handle = handle
         handle.node = node
         node.activeConnection?.onCallbacksChanged(
             onComposingChanged,
             onEdited,
             onImeCaretMoved,
+            onLog,
         )
     }
 }
@@ -204,6 +210,7 @@ internal fun Modifier.editorIme(
     onEdited: () -> Unit,
     onImeCaretMoved: () -> Unit,
     onFocusChanged: (Boolean) -> Unit,
+    onLog: ((String) -> Unit)?,
 ): Modifier =
     then(
         EditorImeNodeElement(
@@ -213,6 +220,7 @@ internal fun Modifier.editorIme(
             onEdited = onEdited,
             onImeCaretMoved = onImeCaretMoved,
             onFocusChanged = onFocusChanged,
+            onLog = onLog,
         ),
     )
 
@@ -225,6 +233,7 @@ internal class EditorImeConnection(
     private var onComposingChanged: (String?) -> Unit,
     private var onEdited: () -> Unit,
     private var onImeCaretMoved: () -> Unit,
+    private var onLog: ((String) -> Unit)? = null,
 ) : InputConnection {
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -245,10 +254,12 @@ internal class EditorImeConnection(
         onComposingChanged: (String?) -> Unit,
         onEdited: () -> Unit,
         onImeCaretMoved: () -> Unit,
+        onLog: ((String) -> Unit)?,
     ) {
         this.onComposingChanged = onComposingChanged
         this.onEdited = onEdited
         this.onImeCaretMoved = onImeCaretMoved
+        this.onLog = onLog
     }
 
     /** Re-anchors the mirror caret to the current engine cursor. */
@@ -261,7 +272,7 @@ internal class EditorImeConnection(
     /** Lands the mirror — with any composing span — into the engine. */
     fun commitPendingComposition() {
         mainHandler.post {
-            synchronized(lock) { commitPendingCompositionLocked() }
+            synchronized(lock) { commitPendingCompositionLocked("commitPendingComposition") }
         }
     }
 
@@ -348,6 +359,10 @@ internal class EditorImeConnection(
         mainHandler.post {
             synchronized(lock) {
                 val committed = text?.toString() ?: ""
+                val composingStartBefore = composingStart
+                val composingEndBefore = composingEnd
+                val caretBefore = mirrorCaret
+                val bufferBefore = session.bufferText()
                 if (composingStart >= 0) {
                     // Capture the span start before replaceMirror clears it
                     // (it drops the span because the edit covers the span).
@@ -362,6 +377,18 @@ internal class EditorImeConnection(
                 }
                 setEngineCaretTo(mirrorCaret)
                 syncEngineAndNotify()
+                logImeEdit(
+                    method = "commitText",
+                    text = committed,
+                    composingBeforeStart = composingStartBefore,
+                    composingBeforeEnd = composingEndBefore,
+                    composingAfterStart = composingStart,
+                    composingAfterEnd = composingEnd,
+                    caretBefore = caretBefore,
+                    caretAfter = mirrorCaret,
+                    bufferBefore = bufferBefore,
+                    bufferAfter = session.bufferText(),
+                )
             }
         }
         return true
@@ -375,6 +402,10 @@ internal class EditorImeConnection(
         mainHandler.post {
             synchronized(lock) {
                 val composed = text?.toString() ?: ""
+                val composingStartBefore = composingStart
+                val composingEndBefore = composingEnd
+                val caretBefore = mirrorCaret
+                val bufferBefore = session.bufferText()
                 val start = if (composingStart >= 0) composingStart else mirrorCaret
                 replaceMirror(start, if (composingStart >= 0) composingEnd else start, composed)
                 composingStart = start
@@ -385,6 +416,18 @@ internal class EditorImeConnection(
                 }
                 setEngineCaretTo(mirrorCaret)
                 syncEngineAndNotify()
+                logImeEdit(
+                    method = "setComposingText",
+                    text = composed,
+                    composingBeforeStart = composingStartBefore,
+                    composingBeforeEnd = composingEndBefore,
+                    composingAfterStart = composingStart,
+                    composingAfterEnd = composingEnd,
+                    caretBefore = caretBefore,
+                    caretAfter = mirrorCaret,
+                    bufferBefore = bufferBefore,
+                    bufferAfter = session.bufferText(),
+                )
             }
         }
         return true
@@ -395,6 +438,10 @@ internal class EditorImeConnection(
             synchronized(lock) {
                 val from = start.coerceIn(0, mirror.length)
                 val to = end.coerceIn(from, mirror.length)
+                val composingStartBefore = composingStart
+                val composingEndBefore = composingEnd
+                val caretBefore = mirrorCaret
+                val bufferBefore = session.bufferText()
                 if (from == to) {
                     composingStart = -1
                     composingEnd = -1
@@ -403,6 +450,18 @@ internal class EditorImeConnection(
                     composingEnd = to
                 }
                 setComposingPreview()
+                logImeEdit(
+                    method = "setComposingRegion",
+                    text = "",
+                    composingBeforeStart = composingStartBefore,
+                    composingBeforeEnd = composingEndBefore,
+                    composingAfterStart = composingStart,
+                    composingAfterEnd = composingEnd,
+                    caretBefore = caretBefore,
+                    caretAfter = mirrorCaret,
+                    bufferBefore = bufferBefore,
+                    bufferAfter = session.bufferText(),
+                )
             }
         }
         return true
@@ -410,7 +469,7 @@ internal class EditorImeConnection(
 
     override fun finishComposingText(): Boolean {
         mainHandler.post {
-            synchronized(lock) { commitPendingCompositionLocked() }
+            synchronized(lock) { commitPendingCompositionLocked("finishComposingText") }
         }
         return true
     }
@@ -479,7 +538,9 @@ internal class EditorImeConnection(
     override fun reportFullscreenMode(enabled: Boolean): Boolean = false
 
     override fun closeConnection() {
-        commitPendingComposition()
+        mainHandler.post {
+            synchronized(lock) { commitPendingCompositionLocked("closeConnection") }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -568,10 +629,47 @@ internal class EditorImeConnection(
         setComposingPreview()
     }
 
+    /**
+     * Emits one diagnostic line per IME edit call on the main looper (lock
+     * held): the method name, the text it carried, the composing span and
+     * UTF-16 caret before/after, and whether this call actually mutated the
+     * engine buffer (a composing-only edit holds the span out of the engine
+     * and leaves `bufferText` unchanged). No-op unless the host wired
+     * [onLog]. Used exclusively for on-device Bug A debugging; it never
+     * touches edit logic.
+     */
+    private fun logImeEdit(
+        method: String,
+        text: String,
+        composingBeforeStart: Int,
+        composingBeforeEnd: Int,
+        composingAfterStart: Int,
+        composingAfterEnd: Int,
+        caretBefore: Int,
+        caretAfter: Int,
+        bufferBefore: String,
+        bufferAfter: String,
+    ) {
+        val log = onLog ?: return
+        val esc = text.replace("\n", "\\n").replace("\u0000", "\\u0000")
+        log(
+            "ime method=$method text=\"$esc\" " +
+                "composingBefore=[$composingBeforeStart,$composingBeforeEnd) " +
+                "composingAfter=[$composingAfterStart,$composingAfterEnd) " +
+                "mutated=${bufferAfter != bufferBefore} " +
+                "utf16CaretBefore=$caretBefore utf16CaretAfter=$caretAfter " +
+                "bufferLenBefore=${bufferBefore.length} bufferLenAfter=${bufferAfter.length}",
+        )
+    }
+
     /** Lands the mirror — with any composing span — into the engine. (lock held) */
-    private fun commitPendingCompositionLocked() {
+    private fun commitPendingCompositionLocked(method: String) {
         if (composingStart < 0) return
+        val composingStartBefore = composingStart
+        val composingEndBefore = composingEnd
+        val spanText = mirror.substring(composingStartBefore, composingEndBefore)
         val caret = mirrorCaret
+        val bufferBefore = session.bufferText()
         composingStart = -1
         composingEnd = -1
         applyImeEdit(session, mirror)
@@ -579,6 +677,18 @@ internal class EditorImeConnection(
         pullSelectionFromEngine()
         onEdited()
         setComposingPreview()
+        logImeEdit(
+            method = method,
+            text = spanText,
+            composingBeforeStart = composingStartBefore,
+            composingBeforeEnd = composingEndBefore,
+            composingAfterStart = composingStart,
+            composingAfterEnd = composingEnd,
+            caretBefore = caret,
+            caretAfter = mirrorCaret,
+            bufferBefore = bufferBefore,
+            bufferAfter = session.bufferText(),
+        )
     }
 
     /** Replaces [mirror] range [start, end) with [replacement], adjusting the
