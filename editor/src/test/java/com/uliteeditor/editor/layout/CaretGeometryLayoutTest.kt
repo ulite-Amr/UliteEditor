@@ -388,6 +388,33 @@ class CaretGeometryLayoutTest {
     }
 
     @Test
+    fun trailingBlankCaretExtentExceedsVisibleLineWidth() {
+        // Bug 1 regression: the horizontal scroll bounds are derived from the
+        // caret's actual extent (buildEditorLayout's maxCaretExtentX), not just
+        // the visible line/wrap width. Typing trailing spaces walks the caret
+        // PAST the visible glyphs (the rebuild includes the trailing blank run's
+        // advance), so a width-only contentWidthPx clamps the camera short and
+        // the caret runs out of view while the camera stops. This pins that the
+        // rebuilt end-of-text caret extends well past the platform's collapsed
+        // spot (getCursorRect collapses trailing neutrals per UBA rule L1) —
+        // the gap that makes the caret's extent a real, larger bound.
+        lateinit var tm: TextMeasurer
+        compose.setContent { tm = rememberTextMeasurer() }
+        val style = TextStyle.Default
+        val text = "hello   "
+        val layout = tm.measure(text, style)
+
+        val collapsedSpot = layout.getCursorRect(text.length).left
+        val caretExtent = caretXIn(layout, text.length, 0f, style, tm)
+
+        assertTrue(
+            "trailing blank caret must extend past the collapsed L1 spot " +
+                "(caretExtent=$caretExtent collapsedSpot=$collapsedSpot)",
+            caretExtent > collapsedSpot,
+        )
+    }
+
+    @Test
     fun noWrapRtlRowGeometryPinsBoxAndEndCaret() {
         // No-wrap geometry that the deferred right-anchoring step (plan Phase 5)
         // will build on: pin that the no-wrap row's box is exactly the line's
