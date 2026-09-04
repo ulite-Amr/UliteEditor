@@ -7,9 +7,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -35,6 +33,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextMeasurer
@@ -45,6 +44,7 @@ import androidx.compose.ui.text.style.TextMotion
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowInsetsCompat
 import com.uliteeditor.editor.EditorDimensions
 import com.uliteeditor.editor.bidi.TextIndex
 import com.uliteeditor.editor.effects.runFlingLoop
@@ -162,11 +162,14 @@ fun EditorComponent(
     }
 
     val density = LocalDensity.current
-    // IME visibility, refreshed at composition so the (non-composable)
-    // gesture handler can consult it: WindowInsets.ime itself is a
-    // @Composable property and cannot be read inside pointerInput.
-    val imeVisibleState = remember { mutableStateOf(true) }
-    imeVisibleState.value = WindowInsets.ime.getBottom(density) > 0
+    // Live IME visibility read at gesture time, not a composition-time
+    // snapshot. Compose's `WindowInsets.ime` is a @Composable property and
+    // cannot be read inside the pointerInput loop, so the gesture handler
+    // consults the platform root window insets of this node's backing view
+    // instead. A snapshot taken during composition can be stale while the
+    // keyboard animates, so a tap would wrongly decide the IME is hidden
+    // and re-show it — dismissing and reopening the keyboard (Bug 3).
+    val view = LocalView.current
     val viewConfiguration = LocalViewConfiguration.current
     val contentColor = MaterialTheme.colorScheme.onSurface
     val caretColor = MaterialTheme.colorScheme.primary
@@ -448,7 +451,12 @@ fun EditorComponent(
         viewConfiguration = viewConfiguration,
         geometry = { geometryState.value },
         leftMarginPx = leftMarginPx,
-        isImeVisible = { imeVisibleState.value },
+        isImeVisible = {
+            WindowInsetsCompat
+                .toWindowInsetsCompat(view)
+                .getInsets(WindowInsetsCompat.Type.ime())
+                .bottom > 0
+        },
         isScaling = { scaling },
         setScaling = { scaling = it },
         fontSizeSp = { fontSizeSp },
@@ -459,6 +467,7 @@ fun EditorComponent(
             imeHandle.syncSelectionFromEngine()
             blink.reset()
         },
+        isFocused = { editing },
         onFocusRequest = { focusRequester.requestFocus() },
         onReShowKeyboard = {
             interactionScope.launch {

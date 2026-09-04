@@ -29,6 +29,8 @@ internal class EditorGestureConfig(
     val onScrollTick: () -> Unit,
     /** Moves the engine cursor to a tapped (row, byte column) and re-arms the blink. */
     val onTap: (row: ULong, column: ULong) -> Unit,
+    /** Whether the editor node is currently focused; gates a redundant requestFocus. */
+    val isFocused: () -> Boolean,
     val onFocusRequest: () -> Unit,
     /** Re-raise the keyboard after a back press hid it (focus alone won't relaunch it). */
     val onReShowKeyboard: () -> Unit,
@@ -178,7 +180,13 @@ internal suspend fun PointerInputScope.awaitGestures(config: EditorGestureConfig
                         )
                         config.onTap(row.toULong(), hitColumn.toULong())
                     }
-                    config.onFocusRequest()
+                    // Re-focus only when not focused. A redundant requestFocus
+                    // on an already-focused node makes the IME connection tear
+                    // down and recreate, which dismisses and reopens the
+                    // keyboard (the Bug 3 flicker).
+                    if (!config.isFocused()) {
+                        config.onFocusRequest()
+                    }
                     // Re-raise the keyboard after a back press hid it
                     // (focus alone won't relaunch it), but only when it is
                     // not already up: re-showing an open keyboard restarts
