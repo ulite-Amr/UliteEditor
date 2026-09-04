@@ -5,7 +5,8 @@
 /// keep-cursor-visible logic. Ports the pure-math parts of
 /// `core/engine/ScrollManager.java`, plus one deliberate extension,
 /// `follow_caret_after_edit` (`ScrollManager` never existed as a base for
-/// it — see the method doc), for the anchored-while-typing fix.
+/// it — see the method doc), for camera pinning while typing: a vertical
+/// bottom-band follow and a horizontal near-edge follow.
 ///
 /// What's *not* ported: `ScrollManager` delegated its fling deceleration
 /// to `android.widget.OverScroller`, a platform class whose internal
@@ -28,6 +29,9 @@ pub struct ScrollState {
     // and the band check self-corrects anyway because it compares against the
     // current scroll).
     follow_anchor_y: Option<f32>,
+    // The caret's content-space x from the previous `follow_caret_after_edit`
+    // call — the reference point for horizontal pinning (set every call).
+    follow_anchor_x: Option<f32>,
 }
 
 /// Pixels of safety margin kept between the cursor and the viewport edge
@@ -64,6 +68,7 @@ impl Default for ScrollState {
             velocity_x: 0.0,
             velocity_y: 0.0,
             follow_anchor_y: None,
+            follow_anchor_x: None,
         }
     }
 }
@@ -124,8 +129,22 @@ impl ScrollState {
         viewport_width: f32,
         viewport_height: f32,
     ) -> bool {
-        let mut needs_scroll = false;
+        let vertical = self.ensure_vertical(cursor_y, line_height, viewport_width, viewport_height);
+        let horizontal = self.ensure_horizontal(cursor_x, viewport_width);
+        vertical || horizontal
+    }
 
+    /// Clamps the camera so the cursor row stays within the vertical safety
+    /// margin, then applies the content bound. Split out of `ensure_visible`
+    /// so the typed-edit follow can keep horizontal pinning independent.
+    fn ensure_vertical(
+        &mut self,
+        cursor_y: f32,
+        line_height: f32,
+        _viewport_width: f32,
+        viewport_height: f32,
+    ) -> bool {
+        let mut needs_scroll = false;
         if cursor_y + line_height > self.scroll_y + viewport_height - SCROLL_OFFSET {
             self.scroll_y = cursor_y + line_height - viewport_height + SCROLL_OFFSET;
             needs_scroll = true;
@@ -133,7 +152,16 @@ impl ScrollState {
             self.scroll_y = cursor_y - SCROLL_OFFSET;
             needs_scroll = true;
         }
+        self.scroll_y = self.scroll_y.clamp(0.0, self.max_scroll_y);
+        needs_scroll
+    }
 
+    /// Clamps the camera so the cursor column stays within the horizontal
+    /// safety margin, then applies the content bound. Split out of
+    /// `ensure_visible` so the typed-edit follow can keep horizontal pinning
+    /// independent.
+    fn ensure_horizontal(&mut self, cursor_x: f32, viewport_width: f32) -> bool {
+        let mut needs_scroll = false;
         if cursor_x > self.scroll_x + viewport_width - SCROLL_OFFSET {
             self.scroll_x = cursor_x - viewport_width + SCROLL_OFFSET;
             needs_scroll = true;
@@ -141,10 +169,15 @@ impl ScrollState {
             self.scroll_x = cursor_x - SCROLL_OFFSET;
             needs_scroll = true;
         }
-
         self.scroll_x = self.scroll_x.clamp(0.0, self.max_scroll_x);
-        self.scroll_y = self.scroll_y.clamp(0.0, self.max_scroll_y);
-
+        // A margin correction moved the camera, so any previous pin anchor is
+        // stale: the next call must re-arm from the caret's current position
+        // rather than computing a delta against an old one. Without this, a
+        // tap that nudged the caret within the same near-edge band would make
+        // the next typed edit over-travel by exactly the tap's offset.
+        if needs_scroll {
+            self.follow_anchor_x = None;
+        }
         needs_scroll
     }
 
@@ -160,9 +193,20 @@ impl ScrollState {
     /// and the "deleted text reappears" lurch — `ensure_visible` on deletion
     /// re-clamped the view down a line as the content height shrank.
     ///
-    /// Deliberate divergence from the ported `ScrollManager`, requested on
-    /// device; the reason lives in `.project/PROGRESS.md`. Idempotent for a
-    /// given caret: repeating the call with unchanged inputs translates the
+    /// Horizontal pinning: while the caret is on screen but within one safety
+    /// margin of a viewport edge, the camera translates by the caret's own
+    /// x-delta instead of letting the margin rule recompute an absolute
+    /// scroll from `caret_x`. This is a deliberate divergence from the ported
+    /// `ScrollManager`, which had no per-edit camera follow at all; see
+    /// `.project/PROGRESS.md`. Without it, an RTL right-aligned row whose
+    /// end-of-text caret sits near the right viewport edge made the margin
+    /// rule snap the whole line far left each time trailing-blank bookkeeping
+    /// nudged the reported caret x — the on-device "line lurches left on a
+    /// trailing space". Pinning is dropped for a caret outside the viewport,
+    /// so taps (which route through `ensure_visible`) and far caret moves
+    /// still fall back to the absolute margin behavior.
+    ///
+    /// Idempotent for a given caret: repeating the call with unchanged inputs translates the
     /// camera by zero. Returns whether scroll actually moved, and cancels an
     /// in-flight fling when the follow does move (the old engine aborted its
     /// `OverScroller` on camera corrections too).
@@ -197,15 +241,47 @@ impl ScrollState {
         }
         self.follow_anchor_y = Some(caret_y);
 
-        // Every remaining edge (including horizontal) and the final clamp
-        // come from the original margin behavior.
-        moved |= self.ensure_visible(
-            caret_x,
-            caret_y,
-            line_height,
-            viewport_width,
-            viewport_height,
-        );
+        // Horizontal pinning: while the caret is on screen but within one
+        // safety margin of a vertical viewport edge, slide the camera by the
+        // caret's own x-delta instead of letting `ensure_horizontal` recompute
+        // an absolute scroll from `caret_x`. That recompute is what
+        // over-travels for RTL: an end-of-text caret on a right-aligned row
+        // sits near the right edge even when the whole line is comfortably on
+        // screen, so the margin rule snapped the entire short line far left
+        // whenever trailing-blank bookkeeping nudged the reported caret x. By
+        // following the caret's movement rather than snapping to a margin, the
+        // camera stays put while the caret is on screen; a caret that leaves
+        // the viewport disables the pin and falls back to the absolute margin
+        // behavior, so taps and long-line edge navigation still reposition.
+        let within_viewport =
+            (caret_x >= self.scroll_x) && (caret_x <= self.scroll_x + viewport_width);
+        let near_edge = within_viewport
+            && (caret_x > self.scroll_x + viewport_width - SCROLL_OFFSET
+                || caret_x < self.scroll_x + SCROLL_OFFSET);
+        if near_edge {
+            if let Some(anchor_x) = self.follow_anchor_x {
+                let travel = caret_x - anchor_x;
+                if travel != 0.0 {
+                    self.scroll_x += travel;
+                    moved = true;
+                    self.velocity_x = 0.0;
+                    self.velocity_y = 0.0;
+                }
+            }
+            self.follow_anchor_x = Some(caret_x);
+        } else {
+            self.follow_anchor_x = None;
+        }
+
+        // Vertical always follows the ordinary margin behavior; horizontal
+        // does too unless the caret was pinned above, in which case the pin
+        // already placed the camera and the absolute recompute would undo it.
+        moved |= self.ensure_vertical(caret_y, line_height, viewport_width, viewport_height);
+        if !near_edge {
+            moved |= self.ensure_horizontal(caret_x, viewport_width);
+        } else {
+            self.scroll_x = self.scroll_x.clamp(0.0, self.max_scroll_x);
+        }
 
         moved
     }
@@ -433,5 +509,101 @@ mod tests {
             assert!(ticks < 10_000, "fling never settled");
         }
         assert_eq!(s.velocity_x, 0.0);
+    }
+
+    #[test]
+    fn horizontal_pin_does_not_over_travel_for_rtl_caret_near_right_edge() {
+        // Bug 2: an RTL end-of-text caret sits near the right viewport edge
+        // even when the line is fully on screen. The old margin rule snapped
+        // the whole short row far left (scroll_x=36) on a tiny trailing-space
+        // nudge; the pin instead follows the caret's own delta, which clamps
+        // back to zero. The camera stays put — no lurch.
+        let mut s = ScrollState::new();
+        s.update_bounds(2000.0, 2000.0, 400.0, 800.0);
+        // Seed: caret at 386 is within one margin of the right edge, no anchor
+        // yet, so nothing moves and the anchor is stored.
+        let moved = s.follow_caret_after_edit(386.0, 200.0, 30.0, 400.0, 800.0);
+        assert!(!moved);
+        assert_eq!(s.scroll_x(), 0.0);
+        // Trailing-space bookkeeping nudges the reported caret left by one
+        // step; the pin follows, which clamps the camera back to zero rather
+        // than jumping it to the right-margin position.
+        let moved = s.follow_caret_after_edit(382.0, 200.0, 30.0, 400.0, 800.0);
+        assert!(moved);
+        assert_eq!(s.scroll_x(), 0.0);
+        // Settled: an unchanged caret leaves the camera alone.
+        let moved = s.follow_caret_after_edit(382.0, 200.0, 30.0, 400.0, 800.0);
+        assert!(!moved);
+        assert_eq!(s.scroll_x(), 0.0);
+    }
+
+    #[test]
+    fn horizontal_pin_translates_by_the_caret_delta_not_the_margin() {
+        // Near the right edge the camera follows the caret's movement exactly
+        // (a 5px move => 5px scroll), never snapping to the margin position
+        // (which the old rule would have set to 10px).
+        let mut s = ScrollState::new();
+        s.update_bounds(2000.0, 2000.0, 400.0, 800.0);
+        s.follow_caret_after_edit(350.0, 200.0, 30.0, 400.0, 800.0);
+        assert_eq!(s.scroll_x(), 0.0);
+        // 355 is past the right margin threshold, so the pin engages and
+        // seeds its anchor.
+        let moved = s.follow_caret_after_edit(355.0, 200.0, 30.0, 400.0, 800.0);
+        assert!(!moved);
+        assert_eq!(s.scroll_x(), 0.0);
+        // A 5px caret advance near the edge translates the camera by 5px.
+        let moved = s.follow_caret_after_edit(360.0, 200.0, 30.0, 400.0, 800.0);
+        assert!(moved);
+        assert_eq!(s.scroll_x(), 5.0);
+    }
+
+    #[test]
+    fn horizontal_pin_lapses_for_an_offscreen_caret() {
+        // A tap teleports the caret off the viewport side; the pin drops and
+        // the absolute margin rule repositions the camera.
+        let mut s = ScrollState::new();
+        s.update_bounds(10_000.0, 10_000.0, 400.0, 800.0);
+        s.follow_caret_after_edit(100.0, 200.0, 30.0, 400.0, 800.0);
+        assert_eq!(s.scroll_x(), 0.0);
+        let moved = s.follow_caret_after_edit(950.0, 200.0, 30.0, 400.0, 800.0);
+        assert!(moved);
+        assert_eq!(s.scroll_x(), 600.0);
+    }
+
+    #[test]
+    fn a_tap_reset_invalidates_a_stale_pin_so_typing_does_not_over_travel() {
+        // The stale-anchor hazard: a tap that nudges the caret within the same
+        // near-edge band must not let the next typed edit over-travel by the
+        // tap's offset. `ensure_horizontal` resets the pin on any margin
+        // correction, so typing after the tap follows from the caret's current
+        // position instead of a stale anchor.
+        let mut s = ScrollState::new();
+        s.update_bounds(10_000.0, 10_000.0, 400.0, 800.0);
+        // Typing seeds the pin at the caret near the right edge.
+        s.follow_caret_after_edit(390.0, 200.0, 30.0, 400.0, 800.0);
+        assert_eq!(s.scroll_x(), 0.0);
+        // A tap moves the caret to 399; it routes through `ensure_visible`,
+        // whose margin correction scrolls and invalidates the pin.
+        s.ensure_visible(399.0, 200.0, 30.0, 400.0, 800.0);
+        assert_eq!(s.scroll_x(), 49.0);
+        // The next typed edit follows from the fresh anchor: no over-travel.
+        s.follow_caret_after_edit(403.0, 200.0, 30.0, 400.0, 800.0);
+        assert_eq!(s.scroll_x(), 49.0);
+    }
+
+    #[test]
+    fn horizontal_pin_or_margin_keeps_a_caret_past_content_in_view() {
+        // Bug 1: a trailing-blank caret walks past the visible content width.
+        // Once it is inside the viewport the pin holds it; past the edge the
+        // margin rule scrolls it back into view.
+        let mut s = ScrollState::new();
+        s.update_bounds(2000.0, 10_000.0, 400.0, 800.0);
+        s.follow_caret_after_edit(395.0, 200.0, 30.0, 400.0, 800.0);
+        assert_eq!(s.scroll_x(), 0.0);
+        // Caret steps to just past the right edge: off screen, so the margin
+        // rule brings it back to the right-margin position.
+        let moved = s.follow_caret_after_edit(430.0, 200.0, 30.0, 400.0, 800.0);
+        assert!(moved);
+        assert_eq!(s.scroll_x(), 80.0);
     }
 }
