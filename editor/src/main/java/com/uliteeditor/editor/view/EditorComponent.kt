@@ -35,6 +35,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextMeasurer
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.style.TextMotion
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.Build
 import com.uliteeditor.editor.EditorDimensions
 import com.uliteeditor.editor.bidi.TextIndex
 import com.uliteeditor.editor.effects.runFlingLoop
@@ -162,11 +164,31 @@ fun EditorComponent(
     }
 
     val density = LocalDensity.current
-    // IME visibility, refreshed at composition so the (non-composable)
-    // gesture handler can consult it: WindowInsets.ime itself is a
-    // @Composable property and cannot be read inside pointerInput.
-    val imeVisibleState = remember { mutableStateOf(true) }
-    imeVisibleState.value = WindowInsets.ime.getBottom(density) > 0
+    // IME visibility is read at gesture time, not as a composition-time
+    // snapshot. Compose's `WindowInsets.ime` is a @Composable property and
+    // cannot be read inside the pointerInput loop, so the gesture handler
+    // consults this node's backing view instead. On API 30+ the platform
+    // exposes the IME window-inset directly, so the decision is current even
+    // while the keyboard animates; a stale snapshot would wrongly re-show an
+    // already-open keyboard (Bug 3). Pre-R has no platform IME-inset query,
+    // so it falls back to a composition-time snapshot (still protected by the
+    // redundant-focus guard).
+    val view = LocalView.current
+    // Composition-time snapshot; only used as the pre-R fallback (see below).
+    // Read once here because `WindowInsets.ime` is @Composable and cannot be
+    // evaluated inside the gesture-time lambda.
+    val imeVisibleSnapshot = WindowInsets.ime.getBottom(density) > 0
+    val isImeVisible: () -> Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            {
+                val bottom = view.rootWindowInsets
+                    ?.getInsets(android.view.WindowInsets.Type.ime())
+                    ?.bottom ?: 0
+                bottom > 0
+            }
+        } else {
+            { imeVisibleSnapshot }
+        }
     val viewConfiguration = LocalViewConfiguration.current
     val contentColor = MaterialTheme.colorScheme.onSurface
     val caretColor = MaterialTheme.colorScheme.primary
@@ -448,7 +470,7 @@ fun EditorComponent(
         viewConfiguration = viewConfiguration,
         geometry = { geometryState.value },
         leftMarginPx = leftMarginPx,
-        isImeVisible = { imeVisibleState.value },
+        isImeVisible = isImeVisible,
         isScaling = { scaling },
         setScaling = { scaling = it },
         fontSizeSp = { fontSizeSp },
@@ -459,6 +481,7 @@ fun EditorComponent(
             imeHandle.syncSelectionFromEngine()
             blink.reset()
         },
+        isFocused = { editing },
         onFocusRequest = { focusRequester.requestFocus() },
         onReShowKeyboard = {
             interactionScope.launch {
