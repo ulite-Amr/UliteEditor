@@ -521,7 +521,7 @@ class CaretGeometryLayoutTest {
             )
             assertTrue(
                 "folded caret k=$k must stay inside the row (x=${xs[k - 1]})",
-                xs[k - 1] in left until left + wrapWidth,
+                xs[k - 1] >= left && xs[k - 1] < left + wrapWidth,
             )
         }
         for (k in 1..3) {
