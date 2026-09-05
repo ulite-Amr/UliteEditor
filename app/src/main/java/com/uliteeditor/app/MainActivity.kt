@@ -1,6 +1,5 @@
 package com.uliteeditor.app
 
-import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -15,7 +14,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.WrapText
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -32,7 +31,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
 import com.uliteeditor.app.BuildConfig
 import com.uliteeditor.editor.metrics.EditorMetrics
 import com.uliteeditor.editor.settings.EditorSettings
@@ -66,10 +64,10 @@ class MainActivity : ComponentActivity() {
                                     contentDescription = "Toggle word wrap",
                                 )
                             }
-                            IconButton(onClick = { shareLogs(context) }) {
+                            IconButton(onClick = { copyLatestLogToClipboard(context) }) {
                                 Icon(
-                                    imageVector = Icons.Filled.Share,
-                                    contentDescription = "Share the session log",
+                                    imageVector = Icons.Filled.ContentCopy,
+                                    contentDescription = "Copy the session log",
                                 )
                             }
                         },
@@ -135,36 +133,25 @@ private fun EditorStatusBar(metrics: EditorMetrics?) {
 }
 
 /**
- * Fires a system share sheet for the newest session log (no adb needed on the
- * device). The log is flushed first so the shared file includes the latest
- * keystrokes, then offered as a text/plain attachment via FileProvider; a
- * clipboard copy is the fallback when no share target resolves.
+ * Copies the newest session log to the system clipboard (no adb needed on the
+ * device) and confirms with a Toast. A clipboard copy survives the share-sheet
+ * dependency on a configured target, so the log is always gettable on-device.
  */
-private fun shareLogs(context: android.content.Context) {
-    val file = EditorLog.latestSessionFile()
-    if (file == null || !file.exists()) {
-        copyLogsToClipboard(context, "No session log written yet.")
+private fun copyLatestLogToClipboard(context: android.content.Context) {
+    val text = EditorLog.latestSessionText()
+    if (text == null) {
+        showToast(context, "No session log written yet.")
         return
     }
-    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-    val send = Intent(Intent.ACTION_SEND).apply {
-        type = "text/plain"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        putExtra(Intent.EXTRA_SUBJECT, "UliteEditor session log ${file.name}")
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    val manager = context.getSystemService(android.content.ClipboardManager::class.java)
+    if (manager == null) {
+        showToast(context, "Could not copy the session log")
+        return
     }
-    try {
-        context.startActivity(
-            Intent.createChooser(send, "Share UliteEditor session log"),
-        )
-    } catch (_: android.content.ActivityNotFoundException) {
-        // No share target resolved: fall back to a clipboard copy so the log
-        // is still gettable on the device without adb.
-        copyLogsToClipboard(context, file.readText())
-    }
+    manager.setPrimaryClip(android.content.ClipData.newPlainText("UliteEditor logs", text))
+    showToast(context, "Session log copied to clipboard")
 }
 
-private fun copyLogsToClipboard(context: android.content.Context, text: String) {
-    val manager = context.getSystemService(android.content.ClipboardManager::class.java) ?: return
-    manager.setPrimaryClip(android.content.ClipData.newPlainText("UliteEditor logs", text))
+private fun showToast(context: android.content.Context, message: String) {
+    android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
 }

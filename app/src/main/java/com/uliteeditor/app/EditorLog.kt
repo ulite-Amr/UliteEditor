@@ -12,10 +12,11 @@ import kotlin.concurrent.withLock
 
 /**
  * A tiny append-only, crash-safe session logger that writes to the app's
- * *internal* files dir — reachable from a phone with no adb by sharing the
- * file out (`shareLatest`, used by the "Share logs" action), or by browsing
- * `context.filesDir/logs`. Every line is flushed immediately so a process
- * that dies mid-repro still leaves everything written up to that point.
+ * *internal* files dir — reachable from a phone with no adb by copying the
+ * newest session to the clipboard (the "Copy session log" action) or by
+ * browsing `context.filesDir/logs`. Every line is flushed immediately so a
+ * process that dies mid-repro still leaves everything written up to that
+ * point.
  *
  * The device operator is on a phone with no computer, so `logcat` is out of
  * reach; this file is the ground truth for caret/alignment debugging. It is
@@ -80,13 +81,17 @@ internal object EditorLog {
     }
 
     /**
-     * The newest log file, ready to attach to a share sheet, or null when
-     * nothing has been written yet. The caller builds an ACTION_SEND intent
-     * with a FileProvider content URI from this path.
+     * The full text of the newest session log, or null when nothing has been
+     * written yet. The caller pastes this into the clipboard (no adb needed on
+     * the device); the whole in-memory buffer stays visible because every line
+     * is flushed to the file as it is logged.
      */
-    fun latestSessionFile(): File? = lock.withLock {
-        dir?.listFiles()?.filter { it.name.startsWith("session-") && it.extension == "txt" }
+    fun latestSessionText(): String? = lock.withLock {
+        val newest = dir?.listFiles()
+            ?.filter { it.name.startsWith("session-") && it.extension == "txt" }
             ?.maxByOrNull { it.name }
+            ?: return null
+        runCatching { newest.readText() }.getOrNull()
     }
 
     private fun trimOldSessions(logsDir: File) {
