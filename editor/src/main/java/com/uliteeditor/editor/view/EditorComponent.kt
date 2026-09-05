@@ -250,6 +250,8 @@ fun EditorComponent(
         leftMarginPx,
         textStyle,
         textMeasurer,
+        wrapWidthPx,
+        wrapEnabled,
     ) {
         steadyCaretSpot(
             rebuilt,
