@@ -183,16 +183,20 @@ class TrailingFoldTest {
         val text = "مرحبا بالعالم   "
         // An unconstrained measure gives the row's intrinsic width; halving it
         // forces the interior space to break onto a second line under ANY font
-        // metrics (the technique wrappedTrailingBlank… uses), so the platform
+        // metrics (the exact recipe wrappedTrailingBlank… uses), so the platform
         // layout becomes the multi-line regime the fold must reject.
         val unconstrained = tm.measure(text, style)
         val wrapWidth = (unconstrained.size.width / 2).coerceAtLeast(1)
         val layout = tm.measure(
             text, style,
             softWrap = true,
-            constraints = Constraints(minWidth = wrapWidth, maxWidth = wrapWidth),
+            constraints = Constraints(maxWidth = wrapWidth),
         )
-        assertTrue("the prefix must span two platform lines", layout.lineCount > 1)
+        assertTrue(
+            "the prefix must span two platform lines " +
+                "(intrinsicW=${unconstrained.size.width} boxW=$wrapWidth lines=${layout.lineCount})",
+            layout.lineCount > 1,
+        )
         assertNull(
             "a prefix that itself wraps is another regime",
             buildTrailingFold(text, ResolvedTextDirection.Rtl, layout, wrapWidth.toFloat(), tm, style),
