@@ -456,6 +456,138 @@ class CaretGeometryLayoutTest {
         )
     }
 
+    @Test
+    fun wrapRtlTrailingBlankOverflowFoldsOntoWrappedLine() {
+        // Bug B: an RTL trailing-blank run whose width overflows the wrap width
+        // stays on ONE visual line, so its lineLeft drifts negative — past the
+        // box's left edge — and the anchor-based rebuild reproduces the same
+        // drift. In wrap mode carets past the overflow point must instead snap
+        // to the line the run WOULD fold onto (right-aligned continuation),
+        // `left + wrapW − (prefix % wrapW)`. This pins:
+        //   1. a caret whose prefix fits the wrap width keeps the anchor-based
+        //      rebuild — no fold below the boundary;
+        //   2. carets past the boundary fold to the formula AND still step one
+        //      blank width per space (the rebuild's sign/magnitude semantics);
+        //   3. passing wrapWidthPx = null never folds, even at the same
+        //      overflowed caret.
+        // The rebuild's tail always includes the anchor char, so an absolute
+        // fitting caret sits at `left + anchorRect.left − tailW(k)` (RTL walks
+        // left). wrapW is set just past the word's own width so the boundary
+        // falls between the junction caret (fits) and the first trailing-space
+        // caret (overflows), with nothing sitting in float-equality range.
+        lateinit var tm: TextMeasurer
+        compose.setContent { tm = rememberTextMeasurer() }
+        val style = TextStyle.Default.copy(textAlign = TextAlign.Right)
+        val word = "مرحبا"
+        val wordW = tm.measure(word, style).size.width.toFloat()
+        val spaceW = ' '.advance(tm, style)
+        val wrapWidth = wordW + 0.25f * spaceW
+        val left = 8f
+        val text = word + " ".repeat(4)
+        val layout = tm.measure(
+            text, style,
+            softWrap = true,
+            constraints = Constraints(minWidth = wrapWidth.toInt(), maxWidth = wrapWidth.toInt()),
+        )
+
+        val anchor = word.length - 1
+        val anchorRectLeft = layout.getCursorRect(anchor).left
+        val prefixW = { k: Int ->
+            tm.measure(text.substring(0, word.length + k), style).size.width.toFloat()
+        }
+        val tailW = { k: Int ->
+            tm.measure(text.substring(anchor, word.length + k), style).size.width.toFloat()
+        }
+
+        // Junction caret (first trailing-space position): the word alone fits,
+        // so the rebuild is unchanged.
+        val xJunction = caretXIn(layout, word.length, left, style, tm, wrapWidth)
+        assertEquals("fitting caret must stay on the anchor-based rebuild",
+            left + anchorRectLeft - tailW(0), xJunction, WRAP_EPS)
+
+        // Every trailing-space caret here overflows (prefix > wrapW): each lands
+        // on the folded line the run would keep, and consecutive carets still
+        // step one blank width left.
+        for (k in 1..4) {
+            assertTrue("prefix at $k must overflow the wrap width", prefixW(k) > wrapWidth)
+        }
+        val xs = (1..4).map { k ->
+            caretXIn(layout, word.length + k, left, style, tm, wrapWidth)
+        }
+        for (k in 1..4) {
+            assertEquals(
+                "overflow caret k=$k must fold onto the wrapped line",
+                left + wrapWidth - (prefixW(k) % wrapWidth), xs[k - 1], WRAP_EPS,
+            )
+            assertTrue(
+                "folded caret k=$k must stay inside the row (x=${xs[k - 1]})",
+                xs[k - 1] in left until left + wrapWidth,
+            )
+        }
+        for (k in 1..3) {
+            assertEquals("folded carets must keep stepping one blank width",
+                -spaceW, xs[k] - xs[k - 1], WRAP_EPS)
+        }
+
+        // No-wrap path is out of scope: without a wrap width the same overflowed
+        // caret keeps the anchor-based rebuild (and its negative drift).
+        val xNoWrap = caretXIn(layout, word.length + 4, left, style, tm, null)
+        assertEquals("no-wrap must not fold",
+            left + anchorRectLeft - tailW(4), xNoWrap, WRAP_EPS)
+    }
+
+    @Test
+    fun wrapRtlTrailingBlankOverflowFoldStaysInsideRow() {
+        // Bug B's visible symptom is the caret RUNNING OFF the reading zone: the
+        // overflow fold must keep every trailing-blank caret inside the row
+        // (in [left, left + wrapWidth)), no matter how long the run gets or
+        // where it currently sits on its wrapped line. The lower bound is weak
+        // (>= left): the exact-fill case (prefix % wrapW == 0) is a line start
+        // and snaps to the left margin, which is inside the row, not past it.
+        lateinit var tm: TextMeasurer
+        compose.setContent { tm = rememberTextMeasurer() }
+        val style = TextStyle.Default.copy(textAlign = TextAlign.Right)
+        val word = "اهلا"
+        val wordW = tm.measure(word, style).size.width.toFloat()
+        val spaceW = ' '.advance(tm, style)
+        // Half a space of slack: the junction caret fits cleanly, every
+        // trailing-space caret overflows (no caret sits in float-equality range).
+        val wrapWidth = wordW + 0.5f * spaceW
+        val left = 10f
+        val text = word + " ".repeat(24)
+        val layout = tm.measure(
+            text, style,
+            softWrap = true,
+            constraints = Constraints(minWidth = wrapWidth.toInt(), maxWidth = wrapWidth.toInt()),
+        )
+
+        for (k in 0..24) {
+            val caret = word.length + k
+            val prefix = tm.measure(text.substring(0, caret), style).size.width.toFloat()
+            val x = caretXIn(layout, caret, left, style, tm, wrapWidth)
+            val folded = prefix > wrapWidth
+            if (folded) {
+                assertTrue(
+                    "overflow caret k=$k must not run off the margin (x=$x)",
+                    x >= left,
+                )
+                assertTrue(
+                    "overflow caret k=$k must sit inside the row (x=$x left+wrap=${left + wrapWidth})",
+                    x < left + wrapWidth,
+                )
+            } else {
+                // The word alone fits: the junction caret keeps stepping its
+                // anchor-char tail (see the fold test above).
+                assertEquals(
+                    "fitting caret k=$k must not fold",
+                    left + layout.getCursorRect(word.length - 1).left -
+                        tm.measure(text.substring(word.length - 1, caret), style).size.width.toFloat(),
+                    x, WRAP_EPS,
+                )
+            }
+        }
+    }
+
     private companion object {
         const val STEP_EPS = 0.5f
         // Wrapped lines round differently; be a touch more lenient there.

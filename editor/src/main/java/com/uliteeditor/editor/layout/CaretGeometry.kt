@@ -69,6 +69,21 @@ internal data class CaretDiagnostics(
  * character (the anchor's run direction) via [lastStrongDirectionBefore] —
  * never from an input-language signal, so the IME input-direction subsystem
  * stays removed.
+ *
+ * One wrap regime is emulated, not trusted: an RTL trailing blank run whose
+ * width overflows the wrap width. The platform keeps such a run on ONE visual
+ * line, so its `lineLeft` drifts negative (a whole run of spaces past the
+ * box's left edge) and the anchor-based rebuild reproduces the same drift —
+ * the visible "caret runs off the screen" Bug B. When [wrapWidthPx] is given
+ * (wrap mode), a caret PAST the overflow point is snapped to the line the run
+ * WOULD fold onto if it wrapped onto right-aligned continuation lines, exactly
+ * like a real wrapped character follows: the run fills successive lines of
+ * [wrapWidthPx], and the caret sits at the last folded line's left edge,
+ * `wrapWidthPx − (width-upto-caret % wrapWidthPx)` (or the left margin when
+ * the line fills exactly). Carets before the overflow point (and all
+ * non-hanging rows) keep the anchor-based rebuild unchanged, so the pinned
+ * stepping tests and every fitting row are untouched. LTR trailing-blank
+ * overflow and the no-wrap path are deliberately out of scope.
  */
 internal fun caretXIn(
     layout: TextLayoutResult,
@@ -76,6 +91,7 @@ internal fun caretXIn(
     leftMarginPx: Float,
     textStyle: TextStyle,
     textMeasurer: TextMeasurer,
+    wrapWidthPx: Float? = null,
 ): Float {
     val text = layout.layoutInput.text.text
     if (text.isEmpty()) return leftMarginPx
@@ -106,10 +122,23 @@ internal fun caretXIn(
     // Rebuild a collapsed trailing-blank caret (see doc above); every other
     // position returns the platform rect's left as-is.
     val anchor = trailingNeutralAnchorBefore(text, caret) ?: return baseX
-    val tail = text.substring(anchor, caret)
-    val advance = measureAdvance(tail, textStyle, textMeasurer)
     val anchorRect = layout.getCursorRect(anchor)
     val anchorDirection = lastStrongDirectionBefore(text, anchor + 1) ?: ResolvedTextDirection.Ltr
+    // RTL trailing-run overflow fold (see doc above): once the RTL text up to
+    // the caret exceeds the wrap width, the run would start wrapping onto
+    // right-aligned continuation lines, so the caret snaps to the last folded
+    // line's left edge instead of drifting past the left margin with the
+    // single over-wide visual line the platform keeps. Only carets past the
+    // overflow point fold; everything fitting keeps the anchor-based rebuild.
+    if (wrapWidthPx != null && anchorDirection == ResolvedTextDirection.Rtl && wrapWidthPx > 0f) {
+        val prefixW = measureAdvance(text.substring(0, caret), textStyle, textMeasurer)
+        if (prefixW > wrapWidthPx) {
+            val remainder = prefixW % wrapWidthPx
+            return leftMarginPx + (if (remainder == 0f) 0f else wrapWidthPx - remainder)
+        }
+    }
+    val tail = text.substring(anchor, caret)
+    val advance = measureAdvance(tail, textStyle, textMeasurer)
     // The rebuild pins the caret's *magnitude* to the measured advance; only
     // its sign differs by the trailing run's direction (RTL walks left/−, LTR
     // walks right/+). The anchor side is the platform rect's left either way.
@@ -129,8 +158,9 @@ internal fun caretXInWithDiagnostics(
     leftMarginPx: Float,
     textStyle: TextStyle,
     textMeasurer: TextMeasurer,
+    wrapWidthPx: Float? = null,
 ): Pair<Float, CaretDiagnostics> {
-    val x = caretXIn(layout, utf16, leftMarginPx, textStyle, textMeasurer)
+    val x = caretXIn(layout, utf16, leftMarginPx, textStyle, textMeasurer, wrapWidthPx)
     val text = layout.layoutInput.text.text
     val caret = utf16.coerceIn(0, text.length)
     val anchor = trailingNeutralAnchorBefore(text, caret)
@@ -333,6 +363,7 @@ internal fun steadyCaretSpot(
     leftMarginPx: Float,
     textStyle: TextStyle,
     textMeasurer: TextMeasurer,
+    wrapWidthPx: Float? = null,
 ): CaretSpot {
     val row = cursor.row.toInt().coerceIn(0, rebuilt.rowLayouts.lastIndex)
     val layout = rebuilt.rowLayouts[row]
@@ -354,7 +385,7 @@ internal fun steadyCaretSpot(
         caretRect.top
     }
     return CaretSpot(
-        x = caretXIn(layout, utf16, leftMarginPx, textStyle, textMeasurer),
+        x = caretXIn(layout, utf16, leftMarginPx, textStyle, textMeasurer, wrapWidthPx),
         y = rebuilt.rowTops[row] + top,
     )
 }
