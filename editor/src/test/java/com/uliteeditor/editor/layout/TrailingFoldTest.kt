@@ -185,7 +185,10 @@ class TrailingFoldTest {
         // stack never soft-wraps at a space (intrinsicW=14 with boxW=7 still
         // yields lineCount 1), so no font-based wrap can build the premise; a
         // hard '\n' break produces the same multi-line layout deterministically.
-        val text = "مرحبا\n   "
+        // The trailing run is deliberately LONG at a box it would overflow on a
+        // single line, so the lineCount gate is the ONLY reason the fold is
+        // refused — removing it must make this test fail.
+        val text = "مرحبا\n" + " ".repeat(40)
         val layout = tm.measure(text, style)
         val spans = (0 until layout.lineCount).joinToString(" | ") { line ->
             "l$line=[${text.substring(layout.getLineStart(line), layout.getLineEnd(line))}]"
@@ -196,7 +199,7 @@ class TrailingFoldTest {
         )
         assertNull(
             "a multi-line prefix is another regime",
-            buildTrailingFold(text, ResolvedTextDirection.Rtl, layout, 500f, tm, style),
+            buildTrailingFold(text, ResolvedTextDirection.Rtl, layout, 20f, tm, style),
         )
     }
 
