@@ -180,11 +180,12 @@ class TrailingFoldTest {
         lateinit var tm: TextMeasurer
         compose.setContent { tm = rememberTextMeasurer() }
         val style = TextStyle.Default.copy(textAlign = TextAlign.Right)
-        val text = "مرحبا بالعالم   "
-        // An unconstrained measure gives the row's intrinsic width; halving it
-        // forces the interior space to break onto a second line under ANY font
-        // metrics (the exact recipe wrappedTrailingBlank… uses), so the platform
-        // layout becomes the multi-line regime the fold must reject.
+        // The exact wrapping recipe wrappedTrailingBlankStillStepsOneBlankWidth
+        // proves on this headless environment: ONE trailing blank breaks onto its
+        // own line at half the intrinsic width. (A longer trailing-space run is
+        // kept on the single collapsed platform line no matter the box, so the
+        // multi-line premise needs the short run.)
+        val text = "مرحبا بالعالم "
         val unconstrained = tm.measure(text, style)
         val wrapWidth = (unconstrained.size.width / 2).coerceAtLeast(1)
         val layout = tm.measure(
@@ -192,9 +193,12 @@ class TrailingFoldTest {
             softWrap = true,
             constraints = Constraints(maxWidth = wrapWidth),
         )
+        val spans = (0 until layout.lineCount).joinToString(" | ") { line ->
+            "l$line=[${text.substring(layout.getLineStart(line), layout.getLineEnd(line))}]"
+        }
         assertTrue(
             "the prefix must span two platform lines " +
-                "(intrinsicW=${unconstrained.size.width} boxW=$wrapWidth lines=${layout.lineCount})",
+                "(intrinsicW=${unconstrained.size.width} boxW=$wrapWidth lines=${layout.lineCount} $spans)",
             layout.lineCount > 1,
         )
         assertNull(
