@@ -4,6 +4,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import org.junit.Assert.assertEquals
@@ -461,13 +462,14 @@ class CaretGeometryLayoutTest {
         // Bug B: an RTL trailing-blank run whose width overflows the wrap width
         // stays on ONE visual line, so its lineLeft drifts negative — past the
         // box's left edge — and the anchor-based rebuild reproduces the same
-        // drift. In wrap mode carets past the overflow point must instead snap
-        // to the line the run WOULD fold onto (right-aligned continuation),
-        // `left + wrapW − (prefix % wrapW)`. This pins:
+        // drift. In wrap mode the row owns a TrailingFold that folds the run
+        // into right-aligned continuation lines; carets past the base-line
+        // capacity sit at the fold's true position. This pins:
         //   1. a caret whose prefix fits the wrap width keeps the anchor-based
         //      rebuild — no fold below the boundary;
-        //   2. carets past the boundary fold to the formula AND still step one
-        //      blank width per space (the rebuild's sign/magnitude semantics);
+        //   2. carets past the boundary fold to the fold geometry, and
+        //      consecutive carets still step one blank width left within a
+        //      continuation line (and roll right across a line break);
         //   3. passing wrapWidthPx = null never folds, even at the same
         //      overflowed caret.
         // The rebuild's tail always includes the anchor char, so an absolute
@@ -489,49 +491,55 @@ class CaretGeometryLayoutTest {
             softWrap = true,
             constraints = Constraints(minWidth = wrapWidth.toInt(), maxWidth = wrapWidth.toInt()),
         )
+        val fold = checkNotNull(
+            buildTrailingFold(text, ResolvedTextDirection.Rtl, layout, wrapWidth, tm, style)
+        ) { "an overflowing RTL trailing run must fold" }
 
         val anchor = word.length - 1
         val anchorRectLeft = layout.getCursorRect(anchor).left
-        val prefixW = { k: Int ->
-            tm.measure(text.substring(0, word.length + k), style).size.width.toFloat()
-        }
         val tailW = { k: Int ->
             tm.measure(text.substring(anchor, word.length + k), style).size.width.toFloat()
         }
 
         // Junction caret (first trailing-space position): the word alone fits,
         // so the rebuild is unchanged.
-        val xJunction = caretXIn(layout, word.length, left, style, tm, wrapWidth)
+        val xJunction = caretXIn(layout, word.length, left, style, tm, wrapWidth, fold)
         assertEquals("fitting caret must stay on the anchor-based rebuild",
             left + anchorRectLeft - tailW(0), xJunction, WRAP_EPS)
 
         // Every trailing-space caret here overflows (prefix > wrapW): each lands
-        // on the folded line the run would keep, and consecutive carets still
-        // step one blank width left.
+        // on the real folded line the manual run-continuation draws — not the
+        // old `prefix % wrapW` approximation, which encoded the pre-fold bug.
         for (k in 1..4) {
-            assertTrue("prefix at $k must overflow the wrap width", prefixW(k) > wrapWidth)
+            val prefixW =
+                tm.measure(text.substring(0, word.length + k), style).size.width.toFloat()
+            assertTrue("prefix at $k must overflow the wrap width", prefixW > wrapWidth)
         }
         val xs = (1..4).map { k ->
-            caretXIn(layout, word.length + k, left, style, tm, wrapWidth)
-        }
-        for (k in 1..4) {
-            assertEquals(
-                "overflow caret k=$k must fold onto the wrapped line",
-                left + wrapWidth - (prefixW(k) % wrapWidth), xs[k - 1], WRAP_EPS,
-            )
-            assertTrue(
-                "folded caret k=$k must stay inside the row (x=${xs[k - 1]})",
-                xs[k - 1] >= left && xs[k - 1] < left + wrapWidth,
-            )
+            val folded = fold.foldLineAndXForCaret(k)!!
+            val x = caretXIn(layout, word.length + k, left, style, tm, wrapWidth, fold)
+            assertEquals("overflow caret k=$k must equal the fold geometry",
+                left + folded.x, x, WRAP_EPS)
+            assertTrue("folded caret k=$k must stay inside the row (x=$x)",
+                x >= left && x < left + wrapWidth)
+            x
         }
         for (k in 1..3) {
-            assertEquals("folded carets must keep stepping one blank width",
-                -spaceW, xs[k] - xs[k - 1], WRAP_EPS)
+            val sameLine = fold.foldLineAndXForCaret(k)!!.line == fold.foldLineAndXForCaret(k + 1)!!.line
+            if (sameLine) {
+                assertEquals("folded carets must keep stepping one blank width",
+                    -spaceW, xs[k] - xs[k - 1], WRAP_EPS)
+            } else {
+                // A line-break pair: the caret rolls right onto the continuation
+                // line's rightmost space (perFull − 1 spare steps inward).
+                assertEquals("folded caret must roll onto the next line",
+                    spaceW * (fold.perFull - 1), xs[k] - xs[k - 1], WRAP_EPS)
+            }
         }
 
         // No-wrap path is out of scope: without a wrap width the same overflowed
         // caret keeps the anchor-based rebuild (and its negative drift).
-        val xNoWrap = caretXIn(layout, word.length + 4, left, style, tm, null)
+        val xNoWrap = caretXIn(layout, word.length + 4, left, style, tm, null, null)
         assertEquals("no-wrap must not fold",
             left + anchorRectLeft - tailW(4), xNoWrap, WRAP_EPS)
     }

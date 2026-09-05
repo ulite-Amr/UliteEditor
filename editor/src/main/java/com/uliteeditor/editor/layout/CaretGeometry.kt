@@ -74,16 +74,16 @@ internal data class CaretDiagnostics(
  * width overflows the wrap width. The platform keeps such a run on ONE visual
  * line, so its `lineLeft` drifts negative (a whole run of spaces past the
  * box's left edge) and the anchor-based rebuild reproduces the same drift —
- * the visible "caret runs off the screen" Bug B. When [wrapWidthPx] is given
- * (wrap mode), a caret PAST the overflow point is snapped to the line the run
- * WOULD fold onto if it wrapped onto right-aligned continuation lines, exactly
- * like a real wrapped character follows: the run fills successive lines of
- * [wrapWidthPx], and the caret sits at the last folded line's left edge,
- * `wrapWidthPx − (width-upto-caret % wrapWidthPx)` (or the left margin when
- * the line fills exactly). Carets before the overflow point (and all
- * non-hanging rows) keep the anchor-based rebuild unchanged, so the pinned
- * stepping tests and every fitting row are untouched. LTR trailing-blank
- * overflow and the no-wrap path are deliberately out of scope.
+ * the visible "caret runs off the screen" Bug B. In wrap mode the owned
+ * [TrailingFold] folds the run into right-aligned continuation lines; a caret
+ * PAST the base-line capacity is placed at the fold, exactly where the space
+ * under it is drawn. Rows without a fold keep the fallback emulation below
+ * (the `prefix % wrapW` snap used when [fold] is null), which keeps carets
+ * inside the row for the regimes the fold deliberately gates out. Carets
+ * before the overflow point (and all non-hanging rows) keep the anchor-based
+ * rebuild unchanged, so the pinned stepping tests and every fitting row are
+ * untouched. LTR trailing-blank overflow and the no-wrap path are
+ * deliberately out of scope.
  */
 internal fun caretXIn(
     layout: TextLayoutResult,
@@ -92,6 +92,7 @@ internal fun caretXIn(
     textStyle: TextStyle,
     textMeasurer: TextMeasurer,
     wrapWidthPx: Float? = null,
+    fold: TrailingFold? = null,
 ): Float {
     val text = layout.layoutInput.text.text
     if (text.isEmpty()) return leftMarginPx
@@ -124,6 +125,17 @@ internal fun caretXIn(
     val anchor = trailingNeutralAnchorBefore(text, caret) ?: return baseX
     val anchorRect = layout.getCursorRect(anchor)
     val anchorDirection = lastStrongDirectionBefore(text, anchor + 1) ?: ResolvedTextDirection.Ltr
+    // Bug B manual fold (see TrailingFold): when the caret's row carries a
+    // fold and the caret is past the run's base-line capacity, it sits at the
+    // true folded position — the left edge of the space under it on its
+    // continuation line — replacing the `prefix % wrapW` approximation below,
+    // which assumes fully filled lines and drifts from the drawn glyph.
+    if (wrapWidthPx != null && fold != null &&
+        caret >= fold.runStartUtf16 && caret <= fold.runEndUtf16
+    ) {
+        val folded = fold.foldLineAndXForCaret(caret - fold.runStartUtf16)
+        if (folded != null) return leftMarginPx + folded.x
+    }
     // RTL trailing-run overflow fold (see doc above): once the RTL text up to
     // the caret exceeds the wrap width, the run would start wrapping onto
     // right-aligned continuation lines, so the caret snaps to the last folded
@@ -159,8 +171,9 @@ internal fun caretXInWithDiagnostics(
     textStyle: TextStyle,
     textMeasurer: TextMeasurer,
     wrapWidthPx: Float? = null,
+    fold: TrailingFold? = null,
 ): Pair<Float, CaretDiagnostics> {
-    val x = caretXIn(layout, utf16, leftMarginPx, textStyle, textMeasurer, wrapWidthPx)
+    val x = caretXIn(layout, utf16, leftMarginPx, textStyle, textMeasurer, wrapWidthPx, fold)
     val text = layout.layoutInput.text.text
     val caret = utf16.coerceIn(0, text.length)
     val anchor = trailingNeutralAnchorBefore(text, caret)
@@ -367,6 +380,7 @@ internal fun steadyCaretSpot(
 ): CaretSpot {
     val row = cursor.row.toInt().coerceIn(0, rebuilt.rowLayouts.lastIndex)
     val layout = rebuilt.rowLayouts[row]
+    val fold = rebuilt.trailingFolds.getOrNull(row)
     val rowText = layout.layoutInput.text.text
     val utf16 = TextIndex.utf16IndexAtByteOffset(
         rowText,
@@ -384,8 +398,23 @@ internal fun steadyCaretSpot(
     } else {
         caretRect.top
     }
+    // A caret past the trailing run's base-line capacity lives on a folded
+    // continuation line below the platform layout: its y is the folded line's
+    // top (a space fills its whole line), not the collapsed platform rect's.
+    // The x for the same caret is folded by caretXIn below.
+    val folded = fold?.let { f ->
+        if (utf16 >= f.runStartUtf16 && utf16 <= f.runEndUtf16) {
+            f.foldLineAndXForCaret(utf16 - f.runStartUtf16)
+        } else {
+            null
+        }
+    }
     return CaretSpot(
-        x = caretXIn(layout, utf16, leftMarginPx, textStyle, textMeasurer, wrapWidthPx),
-        y = rebuilt.rowTops[row] + top,
+        x = caretXIn(layout, utf16, leftMarginPx, textStyle, textMeasurer, wrapWidthPx, fold),
+        y = if (folded != null) {
+            rebuilt.rowTops[row] + folded.line * fold.lineHeightPx
+        } else {
+            rebuilt.rowTops[row] + top
+        },
     )
 }

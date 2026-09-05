@@ -306,6 +306,7 @@ fun EditorComponent(
                     textStyle,
                     textMeasurer,
                     if (wrapEnabled) wrapWidthPx else null,
+                    if (wrapEnabled) rebuilt.trailingFolds.getOrNull(caretRow) else null,
                 )
             } else {
                 null to null
@@ -510,7 +511,10 @@ fun EditorComponent(
                             pathMoved -> movedBy
                             else -> "gesture-or-other"
                         }} " +
-                        "rowCount=${rebuilt.rowLayouts.size}",
+                        "rowCount=${rebuilt.rowLayouts.size} " +
+                        "visualRows=${rebuilt.visualLines} " +
+                        "viewportH=$viewportHeightPx contentH=${rebuilt.contentHeightPx} " +
+                        "caretX=${caretAnchor.x} caretY=${caretAnchor.y}",
                 )
             }
             rtlWrapLast.value = RtlWrapBefore(
