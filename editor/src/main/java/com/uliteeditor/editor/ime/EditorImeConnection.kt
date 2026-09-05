@@ -479,7 +479,7 @@ internal class EditorImeConnection(
         val after = afterLength.coerceAtLeast(0)
         mainHandler.post {
             synchronized(lock) {
-                deleteAround(mirrorCaret - before, mirrorCaret + after)
+                deleteWithLog("deleteSurroundingText", mirrorCaret - before, mirrorCaret + after)
             }
         }
         return true
@@ -489,9 +489,11 @@ internal class EditorImeConnection(
     override fun deleteSurroundingTextInCodePoints(beforeLength: Int, afterLength: Int): Boolean {
         mainHandler.post {
             synchronized(lock) {
-                val start = codePointsBack(mirrorCaret, beforeLength)
-                val end = codePointsForward(mirrorCaret, afterLength)
-                deleteAround(start, end)
+                deleteWithLog(
+                    "deleteSurroundingTextInCodePoints",
+                    codePointsBack(mirrorCaret, beforeLength),
+                    codePointsForward(mirrorCaret, afterLength),
+                )
             }
         }
         return true
@@ -719,13 +721,42 @@ internal class EditorImeConnection(
         }
     }
 
-    private fun deleteAround(start: Int, end: Int) {
+    /** Deletes [start, end) from the mirror and syncs the engine; returns the
+     *  deleted text so callers can log what was removed. (lock held) */
+    private fun deleteAround(start: Int, end: Int): String {
         val from = start.coerceIn(0, mirror.length)
         val to = end.coerceIn(from, mirror.length)
+        val deleted = mirror.substring(from, to)
         replaceMirror(from, to, "")
         mirrorCaret = from
         setEngineCaretTo(mirrorCaret)
         syncEngineAndNotify()
+        return deleted
+    }
+
+    /** Runs [deleteAround] on [start, end) and logs it as [method] in the same
+     *  `ime` format as the other edit surface, so every IME delete route
+     *  (`deleteSurroundingText*` and the key-event backspaces) is visible to a
+     *  Bug A session log. (lock held — same before/after capture as
+     *  [logImeEdit]'s other callers.) */
+    private fun deleteWithLog(method: String, start: Int, end: Int) {
+        val caretBefore = mirrorCaret
+        val composingBeforeStart = composingStart
+        val composingBeforeEnd = composingEnd
+        val bufferBefore = session.bufferText()
+        val deleted = deleteAround(start, end)
+        logImeEdit(
+            method = method,
+            text = deleted,
+            composingBeforeStart = composingBeforeStart,
+            composingBeforeEnd = composingBeforeEnd,
+            composingAfterStart = composingStart,
+            composingAfterEnd = composingEnd,
+            caretBefore = caretBefore,
+            caretAfter = mirrorCaret,
+            bufferBefore = bufferBefore,
+            bufferAfter = session.bufferText(),
+        )
     }
 
     private fun codePointsBack(from: Int, n: Int): Int {
@@ -766,7 +797,7 @@ internal class EditorImeConnection(
             KeyEvent.KEYCODE_DEL -> {
                 mainHandler.post {
                     synchronized(lock) {
-                        deleteAround(codePointsBack(mirrorCaret, 1), mirrorCaret)
+                        deleteWithLog("sendKeyEvent(KEYCODE_DEL)", codePointsBack(mirrorCaret, 1), mirrorCaret)
                     }
                 }
                 true
@@ -774,7 +805,11 @@ internal class EditorImeConnection(
             KeyEvent.KEYCODE_FORWARD_DEL -> {
                 mainHandler.post {
                     synchronized(lock) {
-                        deleteAround(mirrorCaret, codePointsForward(mirrorCaret, 1))
+                        deleteWithLog(
+                            "sendKeyEvent(KEYCODE_FORWARD_DEL)",
+                            mirrorCaret,
+                            codePointsForward(mirrorCaret, 1),
+                        )
                     }
                 }
                 true
