@@ -250,8 +250,17 @@ fun EditorComponent(
         leftMarginPx,
         textStyle,
         textMeasurer,
+        wrapWidthPx,
+        wrapEnabled,
     ) {
-        steadyCaretSpot(rebuilt, cursor, leftMarginPx, textStyle, textMeasurer)
+        steadyCaretSpot(
+            rebuilt,
+            cursor,
+            leftMarginPx,
+            textStyle,
+            textMeasurer,
+            if (wrapEnabled) wrapWidthPx else null,
+        )
     }
 
     // While the IME holds text in composition (autocorrect / suggestions /
@@ -296,6 +305,7 @@ fun EditorComponent(
                     leftMarginPx,
                     textStyle,
                     textMeasurer,
+                    if (wrapEnabled) wrapWidthPx else null,
                 )
             } else {
                 null to null
@@ -347,6 +357,7 @@ fun EditorComponent(
                 leftMarginPx,
                 textStyle,
                 textMeasurer,
+                if (wrapEnabled) wrapWidthPx else null,
             ),
             y = caretRowFirstTop + caretTopIn(composingLayout, composingEndUtf16),
         )
@@ -463,7 +474,16 @@ fun EditorComponent(
             } else {
                 0f
             }
-            val rowW = caretRowLayout?.size?.width?.toFloat() ?: 0f
+            // The layout box width is the full wrap width (fixed constraints), so
+            // `rowW` would never show the trailing-run overflow; measure the row
+            // text itself (word + trailing spaces) so the wrapW comparison is
+            // truthful. Only needed on rows that end in spaces, which is when
+            // this block logs anything anyway.
+            val rowW = if (trailingSpaces > 0) {
+                textMeasurer.measure(AnnotatedString(caretRowText), textStyle).size.width.toFloat()
+            } else {
+                caretRowLayout?.size?.width?.toFloat() ?: 0f
+            }
             val caretLine = caretRowLayout?.getLineForOffset(caretRowUtf16) ?: 0
             val lineLeftAfter = caretRowLayout?.getLineLeft(caretLine)
             val lineRightAfter = caretRowLayout?.getLineRight(caretLine)
