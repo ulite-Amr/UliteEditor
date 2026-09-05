@@ -170,9 +170,23 @@ internal suspend fun PointerInputScope.awaitGestures(config: EditorGestureConfig
                         val row = layout.rowTops.indexOfLast { it <= contentY }
                             .coerceAtLeast(0)
                         val rowLayout = layout.rowLayouts[row]
-                        val hitUtf16 = rowLayout.getOffsetForPosition(
-                            Offset(contentX - config.leftMarginPx, contentY - layout.rowTops[row]),
-                        ).coerceIn(0, rowLayout.layoutInput.text.text.length)
+                        val rowTop = layout.rowTops[row]
+                        val fold = layout.trailingFolds.getOrNull(row)
+                        // A tap below the row's own platform layout lands on a
+                        // folded continuation line (Bug B): those lines are pure
+                        // spaces with no platform glyphs to hit-test, so the
+                        // caret maps arithmetically from the line and x. Taps on
+                        // the base line keep the bidi-aware platform mapping.
+                        val hitUtf16 = if (fold != null && contentY > rowTop + rowLayout.size.height) {
+                            fold.caretOffsetAt(
+                                xLocal = contentX - config.leftMarginPx,
+                                yLocal = contentY - rowTop,
+                            )
+                        } else {
+                            rowLayout.getOffsetForPosition(
+                                Offset(contentX - config.leftMarginPx, contentY - rowTop),
+                            ).coerceIn(0, rowLayout.layoutInput.text.text.length)
+                        }
                         val hitColumn = TextIndex.utf8Length(
                             rowLayout.layoutInput.text.text.substring(0, hitUtf16),
                         )

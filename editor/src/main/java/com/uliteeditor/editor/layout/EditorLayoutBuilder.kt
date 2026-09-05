@@ -27,8 +27,15 @@ internal data class RebuiltEditorLayout(
     val rowLayouts: List<TextLayoutResult>,
     val rowTops: List<Float>,
     val rowDirections: List<ResolvedTextDirection>,
+    /** Per-logical-row manual trailing-run fold, or null when the row has none
+     * (Bug B overflow). Null entries keep the list aligned with [rowLayouts]. */
+    val trailingFolds: List<TrailingFold?>,
     val contentWidthPx: Float,
     val contentHeightPx: Float,
+    /** Total visual lines in the document: platform wrapped lines plus every
+     * row's folded continuation lines. Unlike [rowLayouts].size (logical rows)
+     * this is what a word processor would show as the line count. */
+    val visualLines: Int,
 )
 
 /**
@@ -51,8 +58,10 @@ internal fun buildEditorLayout(
     val rowLayouts = mutableListOf<TextLayoutResult>()
     val rowTops = mutableListOf<Float>()
     val rowDirections = mutableListOf<ResolvedTextDirection>()
+    val trailingFolds = mutableListOf<TrailingFold?>()
     var contentHeightPx = topMarginPx
     var maxLineWidthPx = 0f
+    var visualLines = 0
     // A fixed-width constraint (min == max) makes TextMeasurer lay the
     // paragraph out across the full wrap width instead of collapsing the box
     // to the line's own content width. Inside a content-sized box TextAlign
@@ -98,10 +107,22 @@ internal fun buildEditorLayout(
                 overflow = TextOverflow.Clip,
             )
         }
+        // Bug B fold: an RTL trailing-space run wider than the box is kept on
+        // one platform line, so it is folded manually into continuation lines of
+        // pure spaces (see TrailingFold); the extra height they occupy is added
+        // below so the camera can scroll to them and later rows shift down.
+        val fold = if (wrapEnabled) {
+            buildTrailingFold(text, direction, layout, wrapWidthPx, textMeasurer, textStyle)
+        } else {
+            null
+        }
+        val lineHeightPx = layout.size.height.toFloat()
+        trailingFolds += fold
         rowLayouts += layout
         rowTops += contentHeightPx
         rowDirections += direction
-        contentHeightPx += layout.size.height
+        contentHeightPx += (fold?.extraLines ?: 0) * lineHeightPx + lineHeightPx
+        visualLines += (layout.lineCount + (fold?.extraLines ?: 0))
         if (!wrapEnabled) {
             maxLineWidthPx = maxOf(maxLineWidthPx, layout.size.width.toFloat())
         }
@@ -117,7 +138,9 @@ internal fun buildEditorLayout(
         rowLayouts = rowLayouts,
         rowTops = rowTops,
         rowDirections = rowDirections,
+        trailingFolds = trailingFolds,
         contentWidthPx = contentWidthPx,
         contentHeightPx = contentHeightPx,
+        visualLines = visualLines,
     )
 }

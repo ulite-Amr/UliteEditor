@@ -42,7 +42,13 @@ internal data class EditorDrawState(
 internal fun DrawScope.drawEditorContent(state: EditorDrawState) {
     translate(left = -state.scrollOffset.x, top = -state.scrollOffset.y) {
         val rowTops = state.rebuilt.rowTops
-        val heightOf = { index: Int -> state.rebuilt.rowLayouts[index].size.height.toFloat() }
+        // A row's own Top height is its platform layout's box, plus the folded
+        // continuation lines (Bug B trailing-run overflow) that hang below it in
+        // the same visual column — the draw window must not cull them away.
+        val heightOf = { index: Int ->
+            state.rebuilt.rowLayouts[index].size.height.toFloat() +
+                (state.rebuilt.trailingFolds.getOrNull(index)?.extraHeightPx ?: 0f)
+        }
         if (rowTops.isNotEmpty()) {
             val viewTop = state.scrollOffset.y
             val viewBottom = state.scrollOffset.y + size.height
