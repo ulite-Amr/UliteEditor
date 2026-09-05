@@ -479,7 +479,23 @@ internal class EditorImeConnection(
         val after = afterLength.coerceAtLeast(0)
         mainHandler.post {
             synchronized(lock) {
-                deleteAround(mirrorCaret - before, mirrorCaret + after)
+                val caretBefore = mirrorCaret
+                val composingBeforeStart = composingStart
+                val composingBeforeEnd = composingEnd
+                val bufferBefore = session.bufferText()
+                val deleted = deleteAround(mirrorCaret - before, mirrorCaret + after)
+                logImeEdit(
+                    method = "deleteSurroundingText",
+                    text = deleted,
+                    composingBeforeStart = composingBeforeStart,
+                    composingBeforeEnd = composingBeforeEnd,
+                    composingAfterStart = composingStart,
+                    composingAfterEnd = composingEnd,
+                    caretBefore = caretBefore,
+                    caretAfter = mirrorCaret,
+                    bufferBefore = bufferBefore,
+                    bufferAfter = session.bufferText(),
+                )
             }
         }
         return true
@@ -489,9 +505,25 @@ internal class EditorImeConnection(
     override fun deleteSurroundingTextInCodePoints(beforeLength: Int, afterLength: Int): Boolean {
         mainHandler.post {
             synchronized(lock) {
+                val caretBefore = mirrorCaret
+                val composingBeforeStart = composingStart
+                val composingBeforeEnd = composingEnd
+                val bufferBefore = session.bufferText()
                 val start = codePointsBack(mirrorCaret, beforeLength)
                 val end = codePointsForward(mirrorCaret, afterLength)
-                deleteAround(start, end)
+                val deleted = deleteAround(start, end)
+                logImeEdit(
+                    method = "deleteSurroundingTextInCodePoints",
+                    text = deleted,
+                    composingBeforeStart = composingBeforeStart,
+                    composingBeforeEnd = composingBeforeEnd,
+                    composingAfterStart = composingStart,
+                    composingAfterEnd = composingEnd,
+                    caretBefore = caretBefore,
+                    caretAfter = mirrorCaret,
+                    bufferBefore = bufferBefore,
+                    bufferAfter = session.bufferText(),
+                )
             }
         }
         return true
@@ -719,13 +751,17 @@ internal class EditorImeConnection(
         }
     }
 
-    private fun deleteAround(start: Int, end: Int) {
+    /** Deletes [start, end) from the mirror and syncs the engine; returns the
+     *  deleted text so callers can log what was removed. (lock held) */
+    private fun deleteAround(start: Int, end: Int): String {
         val from = start.coerceIn(0, mirror.length)
         val to = end.coerceIn(from, mirror.length)
+        val deleted = mirror.substring(from, to)
         replaceMirror(from, to, "")
         mirrorCaret = from
         setEngineCaretTo(mirrorCaret)
         syncEngineAndNotify()
+        return deleted
     }
 
     private fun codePointsBack(from: Int, n: Int): Int {
