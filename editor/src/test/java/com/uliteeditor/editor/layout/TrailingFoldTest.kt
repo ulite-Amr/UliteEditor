@@ -180,30 +180,23 @@ class TrailingFoldTest {
         lateinit var tm: TextMeasurer
         compose.setContent { tm = rememberTextMeasurer() }
         val style = TextStyle.Default.copy(textAlign = TextAlign.Right)
-        // The exact wrapping recipe wrappedTrailingBlankStillStepsOneBlankWidth
-        // proves on this headless environment: ONE trailing blank breaks onto its
-        // own line at half the intrinsic width. (A longer trailing-space run is
-        // kept on the single collapsed platform line no matter the box, so the
-        // multi-line premise needs the short run.)
-        val text = "مرحبا بالعالم "
-        val unconstrained = tm.measure(text, style)
-        val wrapWidth = (unconstrained.size.width / 2).coerceAtLeast(1)
-        val layout = tm.measure(
-            text, style,
-            softWrap = true,
-            constraints = Constraints(maxWidth = wrapWidth),
-        )
+        // The fold's gate is `layout.lineCount != 1` (a prefix that itself wraps
+        // is the platform's regime, not the fold's). The headless sdk-34 text
+        // stack never soft-wraps at a space (intrinsicW=14 with boxW=7 still
+        // yields lineCount 1), so no font-based wrap can build the premise; a
+        // hard '\n' break produces the same multi-line layout deterministically.
+        val text = "مرحبا\n   "
+        val layout = tm.measure(text, style)
         val spans = (0 until layout.lineCount).joinToString(" | ") { line ->
             "l$line=[${text.substring(layout.getLineStart(line), layout.getLineEnd(line))}]"
         }
         assertTrue(
-            "the prefix must span two platform lines " +
-                "(intrinsicW=${unconstrained.size.width} boxW=$wrapWidth lines=${layout.lineCount} $spans)",
+            "the row must be laid out on two lines ($spans)",
             layout.lineCount > 1,
         )
         assertNull(
-            "a prefix that itself wraps is another regime",
-            buildTrailingFold(text, ResolvedTextDirection.Rtl, layout, wrapWidth.toFloat(), tm, style),
+            "a multi-line prefix is another regime",
+            buildTrailingFold(text, ResolvedTextDirection.Rtl, layout, 500f, tm, style),
         )
     }
 
